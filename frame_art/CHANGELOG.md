@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.7
+
+### Fixes
+
+- play a folder when the TV refuses Favorites (`aae51df`)
+
+
 ## 0.3.6
 
 ### Fixes
