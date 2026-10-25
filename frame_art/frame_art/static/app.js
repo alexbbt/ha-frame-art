@@ -111,7 +111,13 @@ function note(text, isError) {
 }
 
 function currentAlbum() {
-  return state.albums.find((album) => album.id === selected) || state.albums[0];
+  const chosen = state.albums.find((album) => album.id === selected);
+  if (chosen) return chosen;
+  if (state.playing === "album") {
+    const playing = state.albums.find((album) => album.id === state.playing_album_id);
+    if (playing) return playing;
+  }
+  return state.albums[0];
 }
 
 async function api(path, payload) {
