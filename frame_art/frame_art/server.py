@@ -199,7 +199,11 @@ def _apply_settings(app: App, payload: dict) -> dict:
                 if isinstance(shuffle, str):
                     shuffle = shuffle.lower() == "true"
                 category = str(payload.get("category_id") or slide["category_id"])
-                tv.apply_slideshow(category, minutes, bool(shuffle))
+                content_ids = None
+                playing = app.library.status()
+                if playing.get("playing") == "album" and playing.get("playing_album_id"):
+                    content_ids = app.library.album_content_ids(str(playing["playing_album_id"]))
+                tv.apply_slideshow(category, minutes, bool(shuffle), content_ids)
             item = str(payload.get("item") or "")
             if item:
                 tv.apply_art(item, str(payload.get("value", "")))

@@ -105,8 +105,36 @@ class ProtocolTests(unittest.TestCase):
                 "select_image",
             ],
         )
+        slide = json.loads(json.loads(script.sent[-2])["params"]["data"])
+        self.assertEqual(slide["category_id"], "MY-C0004")
+        self.assertIn("MY_F0009", slide["content_list"])
         message = json.loads(art_message({"request": "get_content_list"}))
         self.assertEqual(message["method"], "ms.channel.emit")
+
+    def test_folder_slideshow_uses_my_photos_when_favorites_is_refused(self) -> None:
+        script = Scripted(
+            [
+                _d2d(content_list=json.dumps([{"content_id": "MY_F0001"}])),
+                _d2d(event="favorite_changed"),
+                _d2d(event="favorite_changed"),
+                _d2d(
+                    event="error",
+                    error_code="-7",
+                    request_data=json.dumps({"request": "set_slideshow_status"}),
+                ),
+                _d2d(event="slideshow_changed"),
+                _d2d(event="selected"),
+            ]
+        )
+        tv = FrameTV(script, d2d_send=lambda *_args: None)
+        self.assertTrue(tv.play_folder(["MY_F0009"], 60))
+        slides = [
+            json.loads(json.loads(item)["params"]["data"])
+            for item in script.sent
+            if json.loads(json.loads(item)["params"]["data"])["request"] == "set_slideshow_status"
+        ]
+        self.assertEqual([item["category_id"] for item in slides], ["MY-C0004", "MY-C0002"])
+        self.assertIn("MY_F0009", slides[1]["content_list"])
 
     def test_thumbnail_bytes_follow_the_json(self) -> None:
         porch = b"\xff\xd8\xff\xe0porch\xff\xd9"
@@ -171,7 +199,7 @@ class PageTests(unittest.TestCase):
                 settings = _get(port, "/api/settings")
                 self.assertEqual(settings["slideshow"]["minutes"], 15)
                 _post(port, "/api/settings", {"minutes": 30, "shuffle": False, "item": "brightness", "value": "6"})
-                self.assertEqual(fake.slide, ("MY-C0002", 30, False))
+                self.assertEqual(fake.slide, ("MY-C0002", 30, False, None))
                 self.assertEqual(fake.art, ("brightness", "6"))
                 status = _get(port, "/api/status")
                 photo_id = status["photos"][0]["id"]
@@ -252,8 +280,14 @@ class FakeTV:
             "art": {"brightness": "4", "motion_timer": "off"},
         }
 
-    def apply_slideshow(self, category_id: str, minutes: int, shuffle: bool) -> None:
-        self.slide = (category_id, minutes, shuffle)
+    def apply_slideshow(
+        self,
+        category_id: str,
+        minutes: int,
+        shuffle: bool,
+        content_ids: list[str] | None = None,
+    ) -> None:
+        self.slide = (category_id, minutes, shuffle, content_ids)
 
     def apply_art(self, item: str, value: str) -> None:
         self.art = (item, value)

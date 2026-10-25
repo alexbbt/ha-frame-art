@@ -209,13 +209,30 @@ class FrameTV:
             status="on" if on else "off",
         )
 
-    def slideshow(self, category_id: str, minutes: int, *, shuffle: bool = True) -> None:
-        self.request(
-            "set_slideshow_status",
-            value="off" if minutes <= 0 else str(minutes),
-            category_id=category_id,
-            type="shuffleslideshow" if shuffle else "slideshow",
-        )
+    def slideshow(
+        self,
+        category_id: str,
+        minutes: int,
+        *,
+        shuffle: bool = True,
+        content_ids: list[str] | None = None,
+    ) -> None:
+        """Start or stop the TV slideshow. A folder is the content list on this set."""
+        chosen = [content_id for content_id in (content_ids or []) if content_id]
+        params = {
+            "value": "off" if minutes <= 0 else str(minutes),
+            "category_id": category_id,
+            "type": "shuffleslideshow" if shuffle else "slideshow",
+        }
+        if chosen:
+            params["content_list"] = json.dumps([{"content_id": content_id} for content_id in chosen])
+        try:
+            self.request("set_slideshow_status", **params)
+        except TVError:
+            if not chosen or category_id == MY_PHOTOS:
+                raise
+            params["category_id"] = MY_PHOTOS
+            self.request("set_slideshow_status", **params)
 
     def show(self, content_id: str) -> None:
         self.request(
@@ -233,8 +250,14 @@ class FrameTV:
             art = {}
         return {"slideshow": slideshow, "art": art}
 
-    def apply_slideshow(self, category_id: str, minutes: int, shuffle: bool) -> None:
-        self.slideshow(category_id, minutes, shuffle=shuffle)
+    def apply_slideshow(
+        self,
+        category_id: str,
+        minutes: int,
+        shuffle: bool,
+        content_ids: list[str] | None = None,
+    ) -> None:
+        self.slideshow(category_id, minutes, shuffle=shuffle, content_ids=content_ids)
 
     def apply_art(self, item: str, value: str) -> None:
         if item == "brightness":
@@ -354,7 +377,7 @@ class FrameTV:
                 self.set_favorite(content_id, False)
             except TVError as err:
                 print(f"Frame Art left {content_id} favorite: {err}", flush=True)
-        self.slideshow(FAVORITES, minutes, shuffle=shuffle)
+        self.slideshow(FAVORITES, minutes, shuffle=shuffle, content_ids=content_ids)
         if not content_ids:
             return False
         try:
