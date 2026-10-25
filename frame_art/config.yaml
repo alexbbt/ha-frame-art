@@ -1,11 +1,12 @@
 ---
 name: Frame Art
-version: "0.1.0"
+version: "0.1.1"
 slug: frame_art
 description: >-
   Upload your own pictures for a Samsung Frame. Drop them on the web page
   and they wait in a folder for Home Assistant to send to the TV.
 url: https://github.com/alexbbt/ha-frame-art
+image: ghcr.io/alexbbt/frame_art
 arch:
   - aarch64
   - amd64
