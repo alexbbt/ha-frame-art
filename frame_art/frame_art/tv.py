@@ -88,8 +88,16 @@ class FrameTV:
         version = payload.get("version") if isinstance(payload, dict) else None
         return str(version or "")
 
-    def _wait(self, request_id: str | None, sub_event: str | None, request_name: str = "") -> dict:
+    def _wait(
+        self,
+        request_id: str | None,
+        sub_event: str | None,
+        request_name: str = "",
+        deadline: float | None = None,
+    ) -> dict:
         while True:
+            if deadline is not None and time.monotonic() > deadline:
+                raise TVError("The TV did not answer")
             if self._queued:
                 frame = self._queued.pop(0)
             else:
@@ -284,11 +292,12 @@ class FrameTV:
             setter(8)
         found: dict[str, bytes] = {}
         waiting = ""
+        deadline = time.monotonic() + 12
         for _ in range(len(ids) + 2):
             if len(found) >= len(ids):
                 break
             try:
-                payload = self._wait(request_id, None, "get_thumbnail_list")
+                payload = self._wait(request_id, None, "get_thumbnail_list", deadline)
             except TVError:
                 break
             _keep_thumb(found, payload)
@@ -303,8 +312,11 @@ class FrameTV:
                 waiting = ""
             info = _conn_info(payload)
             if info.get("ip") and info.get("port") and len(found) < len(ids):
-                for key, data in _recv_thumbnail_list(info).items():
-                    _keep_named(found, key, data)
+                try:
+                    for key, data in _recv_thumbnail_list(info).items():
+                        _keep_named(found, key, data)
+                except (OSError, TVError, json.JSONDecodeError):
+                    pass
                 break
         deadline = time.monotonic() + 12
         for content_id in ids:
@@ -607,17 +619,21 @@ def _open_d2d(info: dict):
     port = int(info.get("port") or 0)
     if not host or not port:
         raise TVError("The TV did not accept the picture")
-    sock = socket.create_connection((host, port), timeout=25)
+    raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    raw.settimeout(20)
     try:
         if info.get("secured"):
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-            sock = context.wrap_socket(sock, server_hostname=host)
+            sock = context.wrap_socket(raw, server_hostname=host)
+        else:
+            sock = raw
+        sock.connect((host, port))
         sock.settimeout(20)
         return sock
     except Exception:
-        sock.close()
+        raw.close()
         raise
 
 
