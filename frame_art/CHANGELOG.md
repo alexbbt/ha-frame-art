@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9
+
+### Fixes
+
+- simplify the page into a quieter gallery (`b376bb6`)
+
+
 ## 0.3.8
 
 ### Fixes
