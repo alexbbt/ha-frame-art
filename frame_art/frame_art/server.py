@@ -34,6 +34,7 @@ class App:
             path = _stored(self, photo["id"])
             photo["file"] = path is not None and path.is_file()
         payload["configured"] = bool(_host())
+        payload["frame"] = self.library.frame_mode()
         return payload
 
 
@@ -280,7 +281,7 @@ def _upload(app: App, album_id: str, content_type: str, body: bytes) -> dict:
     for filename, data in files:
         label = Path(filename or "picture").name or "picture"
         try:
-            display, jpeg = prepare_image(filename, data)
+            display, jpeg = prepare_image(filename, data, fit=app.library.frame_mode() != "fill")
             photo = app.library.add_photo(album_id, display, "")
             try:
                 _keep(app, photo["id"], jpeg)
@@ -402,6 +403,8 @@ def _action(app: App, path: str, payload: dict) -> dict:
         return {"ok": True}
     if path == "/api/settings":
         return _apply_settings(app, payload)
+    if path == "/api/frame":
+        return {"frame": app.library.set_frame_mode(str(payload.get("mode") or ""))}
     raise ValueError("Not found")
 
 

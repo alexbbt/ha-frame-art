@@ -188,7 +188,7 @@ class PageTests(unittest.TestCase):
                 body, content_type = _multipart("room.jpg", JPEG)
                 import frame_art.server as server
 
-                server.prepare_image = lambda filename, data: ("room.jpg", JPEG)
+                server.prepare_image = lambda filename, data, **_kwargs: ("room.jpg", JPEG)
                 saved = _raw(port, f"/upload?album={album_id}", body, content_type)
                 self.assertEqual(saved["saved"], ["room.jpg"])
                 self.assertEqual(saved["photos"][0]["name"], "room.jpg")
@@ -234,7 +234,7 @@ class PageTests(unittest.TestCase):
             try:
                 import frame_art.server as server
 
-                def prepare(filename, data):
+                def prepare(filename, data, **_kwargs):
                     if filename.startswith("bad"):
                         raise ValueError("Could not read that picture")
                     return ("ok.jpg", JPEG)
@@ -262,7 +262,7 @@ class PageTests(unittest.TestCase):
             try:
                 import frame_art.server as server
 
-                server.prepare_image = lambda filename, data: ("room.jpg", JPEG)
+                server.prepare_image = lambda filename, data, **_kwargs: ("room.jpg", JPEG)
                 body, content_type = _multipart("room.jpg", JPEG)
                 result = _raw(port, "/upload?album=", body, content_type)
                 self.assertEqual(result["saved"], ["room.jpg"])
@@ -282,6 +282,34 @@ class PageTests(unittest.TestCase):
                 again = _get(port, "/api/status")["photos"][0]
                 self.assertEqual(again["content_id"], "MY_F0002")
                 self.assertTrue(again["file"])
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
+    def test_fill_the_screen_is_applied_before_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeTV()
+            app = App(Library(Path(tmp) / "library.json"), lambda: _connect(fake))
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(app))
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            port = httpd.server_address[1]
+            try:
+                import frame_art.server as server
+
+                seen = {}
+
+                def prepare(filename, data, fit=True):
+                    seen["fit"] = fit
+                    return ("room.jpg", JPEG)
+
+                server.prepare_image = prepare
+                self.assertEqual(_get(port, "/api/status")["frame"], "fit")
+                self.assertEqual(_post(port, "/api/frame", {"mode": "fill"})["frame"], "fill")
+                body, content_type = _multipart("room.jpg", JPEG)
+                _raw(port, "/upload?album=", body, content_type)
+                self.assertFalse(seen["fit"])
             finally:
                 httpd.shutdown()
                 httpd.server_close()

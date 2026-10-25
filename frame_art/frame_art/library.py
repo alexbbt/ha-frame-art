@@ -115,6 +115,19 @@ class Library:
                 if photo["album_id"] == album_id and photo.get("content_id")
             ]
 
+    def frame_mode(self) -> str:
+        with self._lock:
+            return _frame_mode(self._data.get("frame"))
+
+    def set_frame_mode(self, mode: str) -> str:
+        with self._lock:
+            chosen = _frame_mode(mode)
+            if mode not in {"fit", "fill"}:
+                raise ValueError("Choose whole photo or fill the screen")
+            self._data["frame"] = chosen
+            self._save()
+            return chosen
+
     def mark_playing(self, mode: str | None, album_id: str | None) -> None:
         with self._lock:
             if album_id is not None:
@@ -173,6 +186,7 @@ class Library:
         data.setdefault("photos", [])
         data.setdefault("playing", None)
         data.setdefault("playing_album_id", None)
+        data["frame"] = _frame_mode(data.get("frame"))
         return data
 
     def _save(self) -> None:
@@ -180,6 +194,10 @@ class Library:
         temporary = self.path.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(self._data), encoding="utf-8")
         temporary.replace(self.path)
+
+
+def _frame_mode(mode: str | None) -> str:
+    return mode if mode in {"fit", "fill"} else "fit"
 
 
 def _album_name(name: str) -> str:

@@ -9,6 +9,7 @@ const addLabel = document.getElementById("add-label");
 const minutesEl = document.getElementById("minutes");
 const orderEl = document.getElementById("order");
 const rotateEl = document.getElementById("rotate");
+const frameEl = document.getElementById("frame");
 const sheet = document.getElementById("sheet");
 const sheetImage = document.getElementById("sheet-image");
 const sheetName = document.getElementById("sheet-name");
@@ -205,6 +206,7 @@ function render() {
   }
 
   applying = true;
+  frameEl.value = state.frame === "fill" ? "fill" : "fit";
   if (state.playing === "all") rotateEl.value = "all";
   else if (state.playing === "album" && state.playing_album_id === selected) rotateEl.value = "folder";
   else rotateEl.value = "";
@@ -380,6 +382,15 @@ document.getElementById("delete-folder").addEventListener("click", async () => {
 
 minutesEl.addEventListener("change", () => saveSlideshow().catch((err) => note(err.message, true)));
 orderEl.addEventListener("change", () => saveSlideshow().catch((err) => note(err.message, true)));
+frameEl.addEventListener("change", async () => {
+  if (applying) return;
+  try {
+    const data = await api("api/frame", { mode: frameEl.value });
+    state.frame = data.frame;
+  } catch (err) {
+    note(err.message, true);
+  }
+});
 
 rotateEl.addEventListener("change", async () => {
   if (applying) return;

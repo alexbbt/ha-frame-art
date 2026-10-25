@@ -10,8 +10,8 @@ from .store import MAX_BYTES, convert_heic, looks_like_image, safe_filename, sni
 FRAME = (3840, 2160)
 
 
-def prepare_image(filename: str, data: bytes, *, convert=convert_heic) -> tuple[str, bytes]:
-    """Return a display name and 4K JPEG bytes."""
+def prepare_image(filename: str, data: bytes, *, convert=convert_heic, fit: bool = True) -> tuple[str, bytes]:
+    """Return a display name and 4K JPEG bytes. Fit keeps the whole photo."""
     if not data:
         raise ValueError("That file is empty")
     if len(data) > MAX_BYTES:
@@ -27,12 +27,12 @@ def prepare_image(filename: str, data: bytes, *, convert=convert_heic) -> tuple[
         stored = safe_filename(filename if suffix in {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"} else "picture.jpg")
     except ValueError:
         stored = "picture.jpg"
-    jpeg = to_frame_jpeg(data)
+    jpeg = to_frame_jpeg(data, fit=fit)
     return f"{Path(stored).stem}.jpg", jpeg
 
 
-def to_frame_jpeg(data: bytes) -> bytes:
-    """Letterbox a picture onto a 3840x2160 black frame."""
+def to_frame_jpeg(data: bytes, *, fit: bool = True) -> bytes:
+    """Make a 3840x2160 JPEG. Fit letterboxes. Fill crops to the screen."""
     from PIL import Image, ImageOps, UnidentifiedImageError
 
     try:
@@ -41,11 +41,14 @@ def to_frame_jpeg(data: bytes) -> bytes:
                 image.draft("RGB", FRAME)
             image = ImageOps.exif_transpose(image)
             image = image.convert("RGB")
-            image.thumbnail(FRAME, Image.Resampling.LANCZOS)
-            canvas = Image.new("RGB", FRAME, (0, 0, 0))
-            canvas.paste(
-                image, ((FRAME[0] - image.width) // 2, (FRAME[1] - image.height) // 2)
-            )
+            if fit:
+                image.thumbnail(FRAME, Image.Resampling.LANCZOS)
+                canvas = Image.new("RGB", FRAME, (0, 0, 0))
+                canvas.paste(
+                    image, ((FRAME[0] - image.width) // 2, (FRAME[1] - image.height) // 2)
+                )
+            else:
+                canvas = ImageOps.fit(image, FRAME, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
             output = io.BytesIO()
             canvas.save(output, "JPEG", quality=90)
             return output.getvalue()
