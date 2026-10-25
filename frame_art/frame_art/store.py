@@ -1,4 +1,4 @@
-"""Save pictures into the Frame inbox and list what is waiting."""
+"""Check picture names and file types before they go to the TV."""
 
 from __future__ import annotations
 

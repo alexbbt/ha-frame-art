@@ -3,8 +3,8 @@ name: Frame Art
 version: "0.1.1"
 slug: frame_art
 description: >-
-  Upload your own pictures for a Samsung Frame. Drop them on the web page
-  and they wait in a folder for Home Assistant to send to the TV.
+  Upload, delete, and sort your own Samsung Frame pictures into folders.
+  The TV can play every photo, or only the folder you choose.
 url: https://github.com/alexbbt/ha-frame-art
 image: ghcr.io/alexbbt/frame_art
 arch:
@@ -16,15 +16,17 @@ ingress_port: 8391
 panel_icon: mdi:image-frame
 panel_title: Frame Art
 panel_admin: false
-map:
-  - homeassistant_config:rw
 ports:
   8391/tcp: 8391
 ports_description:
-  8391/tcp: Upload page
+  8391/tcp: Album page
 options:
-  inbox: /homeassistant/www/frame-art/inbox
-  uploaded: /homeassistant/www/frame-art/uploaded
+  host: ""
+  port: 8001
+  token: ""
+  slideshow_minutes: 60
 schema:
-  inbox: str
-  uploaded: str
+  host: str
+  port: port
+  token: password
+  slideshow_minutes: int(1,1440)

@@ -2,10 +2,15 @@
 # shellcheck shell=bash
 set -euo pipefail
 
-export FRAME_ART_INBOX
-FRAME_ART_INBOX="$(bashio::config 'inbox')"
-export FRAME_ART_UPLOADED
-FRAME_ART_UPLOADED="$(bashio::config 'uploaded')"
+export FRAME_ART_HOST
+FRAME_ART_HOST="$(bashio::config 'host')"
+export FRAME_ART_PORT
+FRAME_ART_PORT="$(bashio::config 'port')"
+export FRAME_ART_TOKEN
+FRAME_ART_TOKEN="$(bashio::config 'token')"
+export FRAME_ART_MINUTES
+FRAME_ART_MINUTES="$(bashio::config 'slideshow_minutes')"
+export FRAME_ART_DATA="/data"
 export PORT="${INGRESS_PORT:-8391}"
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="/opt/frame_art"

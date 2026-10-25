@@ -118,3 +118,47 @@ h2 {
   color: var(--muted);
   font: 0.95rem/1.4 ui-sans-serif, system-ui, sans-serif;
 }
+
+.albums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+.album, .actions button, .new-album button {
+  border: 1px solid var(--line);
+  background: #fffdf8;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  font: 0.95rem/1.2 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.album.selected { border-color: var(--accent); color: var(--accent); }
+.album.playing { background: #e7f0ea; }
+
+.new-album, .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.new-album input, .row-actions select {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  font: 0.95rem/1.2 ui-sans-serif, system-ui, sans-serif;
+  background: #fffdf8;
+  color: var(--ink);
+}
+
+.actions .secondary { color: var(--muted); }
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}

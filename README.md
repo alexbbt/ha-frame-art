@@ -3,9 +3,9 @@
 [![Release](https://img.shields.io/github/v/release/alexbbt/ha-frame-art?label=release)](https://github.com/alexbbt/ha-frame-art/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Home Assistant app (formerly an add-on) with a web page for your own Samsung Frame pictures.
+Home Assistant app (formerly an add-on) for your own Samsung Frame pictures.
 
-Drop JPEG, PNG, WebP, or iPhone photos on the page. They are saved into a folder on Home Assistant. An automation can send that folder to the TV's Art Mode, with no Samsung account and no Art Store.
+The TV keeps every uploaded photo in one pile. It can rotate all of them, or only Favorites. This page adds folders the TV does not have. Play a folder and that set becomes Favorites, which is the set the TV rotates. Remove deletes the picture from the TV.
 
 ## Install
 
@@ -19,35 +19,35 @@ That opens the add-repository dialog on your own Home Assistant, with this addre
 2. Open the **⋮** menu at the top right and choose **Repositories**
 3. Add `https://github.com/alexbbt/ha-frame-art`
 4. Install **Frame Art** and start it
-5. Open **Open Web UI**, or port **8391** on the Home Assistant machine
+5. Set the TV address in the app options
+6. Open **Open Web UI**, or port **8391** on the Home Assistant machine
 
-It runs on 64-bit Home Assistant (aarch64 or amd64).
+The first time it connects, accept **Frame Art** on the TV. It runs on 64-bit Home Assistant (aarch64 or amd64).
 
 To pick up a newer version, open the app and choose **Check for updates**.
 
-## How a picture gets to the TV
+## What the TV can store
 
 ```mermaid
 flowchart LR
-  PAGE[This page] --> INBOX[Inbox folder]
-  INBOX --> HA[Your automation]
-  HA --> TV[Frame Art Mode]
+  PAGE[Folders on this page] --> TV[My Photos on the TV]
+  PAGE --> FAV[Favorites]
+  FAV --> PLAY[The set that rotates]
 ```
 
-This app does not talk to the TV itself. It only fills the inbox. The default folders are:
+| On the TV | What it is |
+|-----------|------------|
+| My Photos | Every picture this page uploads |
+| Favorites | The one folder you chose to play |
+| Slideshow | Either Favorites, or every photo |
 
-| Folder | Path |
-|--------|------|
-| New pictures | `/homeassistant/www/frame-art/inbox` |
-| Already sent | `/homeassistant/www/frame-art/uploaded` |
-
-Inside the Home Assistant container those are `/config/www/frame-art/inbox` and `/config/www/frame-art/uploaded`.
-
-A picture leaves the waiting list when something else moves it from the inbox into the uploaded folder.
+There is no way to create more folders on the TV. Folders in this app are the way to keep sets and play one of them.
 
 ## Configuration
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `inbox` | `/homeassistant/www/frame-art/inbox` | Where uploads are written |
-| `uploaded` | `/homeassistant/www/frame-art/uploaded` | Shown on the page as already sent |
+| `host` | empty | TV address on your network |
+| `port` | `8001` | Art connection port. Use `8002` if the TV requires the encrypted port |
+| `token` | empty | Leave empty for the on-screen prompt. Fill it in if the TV already gave this app a token |
+| `slideshow_minutes` | `60` | How long each picture stays up |

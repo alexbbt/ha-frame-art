@@ -6,6 +6,7 @@ FROM ${BUILD_FROM}
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
     python3 \
+    py3-pillow \
     libheif-tools
 
 WORKDIR /opt/frame_art

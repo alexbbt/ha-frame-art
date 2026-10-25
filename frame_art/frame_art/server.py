@@ -1,28 +1,35 @@
-"""Upload page for pictures that should go on a Samsung Frame."""
+"""Album page for pictures on a Samsung Frame."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
+import threading
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from .store import delete_waiting, list_pictures, save_upload
+from .images import prepare_image
+from .library import Library
+from .tv import TVError, open_tv
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_BODY = 80 * 1024 * 1024
 
 
-def inbox_dir() -> Path:
-    return Path(os.environ.get("FRAME_ART_INBOX", "/homeassistant/www/frame-art/inbox"))
+class App:
+    def __init__(self, library: Library, connect) -> None:
+        self.library = library
+        self.connect = connect
+        self.lock = threading.Lock()
 
-
-def uploaded_dir() -> Path:
-    return Path(
-        os.environ.get("FRAME_ART_UPLOADED", "/homeassistant/www/frame-art/uploaded")
-    )
+    def view(self) -> dict:
+        self.library.ensure_album()
+        payload = self.library.status()
+        payload["configured"] = bool(_host())
+        return payload
 
 
 def parse_files(content_type: str, body: bytes) -> list[tuple[str, bytes]]:
@@ -63,88 +70,194 @@ def _filename(header: str) -> str | None:
     return name or None
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "FrameArt"
+def handler_for(app: App):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "FrameArt"
 
-    def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
-        if path in ("/", "/index.html"):
-            self._static("index.html", "text/html; charset=utf-8")
-            return
-        if path == "/style.css":
-            self._static("style.css", "text/css; charset=utf-8")
-            return
-        if path == "/app.js":
-            self._static("app.js", "text/javascript; charset=utf-8")
-            return
-        if path == "/api/status":
-            self._json(
-                200,
-                {
-                    "inbox": list_pictures(inbox_dir()),
-                    "uploaded": list_pictures(uploaded_dir(), limit=30),
-                },
-            )
-            return
-        self._json(404, {"error": "Not found"})
-
-    def do_POST(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            self._json(400, {"error": "Upload the pictures from the page"})
-            return
-        if length <= 0 or length > MAX_BODY:
-            self._json(400, {"error": "That upload is empty or larger than 80 MB"})
-            return
-        body = self.rfile.read(length)
-        try:
-            if path == "/upload":
-                saved = [
-                    save_upload(inbox_dir(), name, data)
-                    for name, data in parse_files(self.headers.get("Content-Type", ""), body)
-                ]
-                self._json(200, {"saved": saved})
+        def do_GET(self) -> None:  # noqa: N802
+            path = urlparse(self.path).path
+            if path in ("/", "/index.html"):
+                self._static("index.html", "text/html; charset=utf-8")
                 return
-            if path == "/delete":
-                payload = json.loads(body.decode("utf-8"))
-                delete_waiting(inbox_dir(), str(payload.get("name", "")))
-                self._json(200, {"ok": True})
+            if path == "/style.css":
+                self._static("style.css", "text/css; charset=utf-8")
                 return
-        except (ValueError, json.JSONDecodeError, OSError) as err:
-            message = str(err) if isinstance(err, ValueError) else "Could not save that picture"
-            self._json(400, {"error": message})
-            return
-        self._json(404, {"error": "Not found"})
-
-    def log_message(self, fmt: str, *args) -> None:
-        return
-
-    def _static(self, name: str, content_type: str) -> None:
-        path = STATIC / name
-        if not path.is_file():
+            if path == "/app.js":
+                self._static("app.js", "text/javascript; charset=utf-8")
+                return
+            if path == "/api/status":
+                self._json(200, app.view())
+                return
             self._json(404, {"error": "Not found"})
-            return
-        data = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(data)
 
-    def _json(self, status: int, payload: dict) -> None:
-        data = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self._json(400, {"error": "That request was incomplete"})
+                return
+            if length < 0 or length > MAX_BODY:
+                self._json(400, {"error": "That upload is empty or larger than 80 MB"})
+                return
+            body = self.rfile.read(length) if length else b""
+            try:
+                if parsed.path == "/upload":
+                    album_id = parse_qs(parsed.query).get("album", [""])[0]
+                    saved = _upload(app, album_id, self.headers.get("Content-Type", ""), body)
+                    self._json(200, {"saved": saved})
+                    return
+                payload = json.loads(body.decode("utf-8") or "{}")
+                result = _action(app, parsed.path, payload)
+            except (ValueError, TVError, json.JSONDecodeError, OSError) as err:
+                message = str(err) if isinstance(err, (ValueError, TVError)) else "Could not save that picture"
+                self._json(400, {"error": message})
+                return
+            self._json(200, result)
+
+        def log_message(self, fmt: str, *args) -> None:
+            return
+
+        def _static(self, name: str, content_type: str) -> None:
+            path = STATIC / name
+            if not path.is_file():
+                self._json(404, {"error": "Not found"})
+                return
+            data = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _json(self, status: int, payload: dict) -> None:
+            data = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+
+    return Handler
+
+
+def _upload(app: App, album_id: str, content_type: str, body: bytes) -> list[str]:
+    files = parse_files(content_type, body)
+    prepared = [prepare_image(filename, data) for filename, data in files]
+    if not album_id:
+        album_id = app.library.ensure_album()
+    saved: list[str] = []
+    with app.lock:
+        with app.connect() as tv:
+            for display, jpeg in prepared:
+                content_id = tv.upload(jpeg)
+                photo = app.library.add_photo(album_id, display, content_id)
+                saved.append(photo["name"])
+                if app.library.status().get("playing_album_id") == album_id:
+                    tv.set_favorite(content_id, True)
+    return saved
+
+
+def _action(app: App, path: str, payload: dict) -> dict:
+    if path == "/api/albums":
+        album = app.library.add_album(str(payload.get("name", "")))
+        return {"album": album}
+    if path == "/api/albums/rename":
+        album = app.library.rename_album(str(payload.get("id", "")), str(payload.get("name", "")))
+        return {"album": album}
+    if path == "/api/albums/delete":
+        app.library.delete_album(str(payload.get("id", "")))
+        return {"ok": True}
+    if path == "/api/move":
+        photo = app.library.move_photo(str(payload.get("id", "")), str(payload.get("album_id", "")))
+        return {"photo": photo}
+    if path == "/api/remove":
+        photo_id = str(payload.get("id", ""))
+        with app.lock:
+            photo = next(
+                (item for item in app.library.status()["photos"] if item["id"] == photo_id),
+                None,
+            )
+            if photo is None:
+                raise ValueError("That picture is gone")
+            with app.connect() as tv:
+                tv.delete([photo["content_id"]])
+            app.library.remove_photo(photo_id)
+        return {"ok": True}
+    if path == "/api/play":
+        return _play(app, str(payload.get("album_id", "")))
+    if path == "/api/sync":
+        album_id = str(payload.get("album_id", "")) or app.library.ensure_album()
+        with app.lock:
+            with app.connect() as tv:
+                app.library.sync_tv(album_id, tv.my_photos())
+        return {"ok": True}
+    raise ValueError("Not found")
+
+
+def _play(app: App, album_id: str) -> dict:
+    minutes = _minutes()
+    with app.lock:
+        with app.connect() as tv:
+            if not album_id:
+                tv.play_all(minutes)
+                app.library.mark_playing("all", None)
+                return {"playing": "all", "showing": False}
+            content_ids = app.library.album_content_ids(album_id)
+            showing = tv.play_folder(content_ids, minutes)
+            app.library.mark_playing("album", album_id)
+    if showing:
+        return {"playing": "album", "showing": True}
+    return {
+        "playing": "album",
+        "showing": False,
+        "message": "That folder is set. It shows when the TV is in Art Mode.",
+    }
+
+
+def _host() -> str:
+    return os.environ.get("FRAME_ART_HOST", "").strip()
+
+
+def _port() -> int:
+    try:
+        return int(os.environ.get("FRAME_ART_PORT", "8001"))
+    except ValueError:
+        return 8001
+
+
+def _minutes() -> int:
+    try:
+        value = int(os.environ.get("FRAME_ART_MINUTES", "60"))
+    except ValueError:
+        return 60
+    return min(1440, max(1, value))
+
+
+def _token(data_dir: Path) -> str:
+    configured = os.environ.get("FRAME_ART_TOKEN", "").strip()
+    if configured and configured != "null":
+        return configured
+    path = data_dir / "token"
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+@contextmanager
+def _connect(data_dir: Path):
+    tv = open_tv(_host(), _port(), _token(data_dir))
+    try:
+        yield tv
+    finally:
+        tv.close()
 
 
 def main() -> None:
+    data_dir = Path(os.environ.get("FRAME_ART_DATA", "/data"))
+    app = App(Library(data_dir / "library.json"), lambda: _connect(data_dir))
     port = int(os.environ.get("PORT", "8391"))
-    httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    httpd = ThreadingHTTPServer(("0.0.0.0", port), handler_for(app))
     httpd.serve_forever()
