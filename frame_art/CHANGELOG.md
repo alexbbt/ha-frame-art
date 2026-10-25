@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+### Features
+
+- manage Frame albums and delete pictures on the TV (`91db562`)
+
+
 ## 0.1.1
 
 ### Changes
