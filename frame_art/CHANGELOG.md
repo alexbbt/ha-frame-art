@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+### Fixes
+
+- save a batch of photos one at a time (`06ca2ab`)
+
+
 ## 0.2.0
 
 ### Features
