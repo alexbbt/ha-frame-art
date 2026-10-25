@@ -103,6 +103,7 @@ let applying = false;
 let openPhoto = null;
 let selecting = false;
 let picked = new Set();
+let anchor = "";
 let ready = new Set();
 let loadingPreviews = false;
 let warmToken = 0;
@@ -177,6 +178,7 @@ function render() {
       selected = item.id;
       selecting = false;
       picked.clear();
+      anchor = "";
       showCurrent();
     });
     albumsEl.appendChild(button);
@@ -190,6 +192,7 @@ function render() {
   const alive = new Set(photos.map((photo) => photo.id));
   picked = new Set([...picked].filter((id) => alive.has(id)));
   toggleEl.textContent = selecting ? "Cancel" : "Select";
+  document.getElementById("select-all").hidden = !selecting || !photos.some((photo) => !photo.preview);
   countEl.hidden = !selecting;
   deleteEl.hidden = !selecting;
   countEl.textContent = picked.size === 1 ? "1 selected" : picked.size + " selected";
@@ -239,17 +242,34 @@ function card(photo) {
     hint.textContent = photo.preview ? "Saving" : store ? "Art Store" : "Not on the TV";
     button.append(hint);
   }
-  button.addEventListener("click", () => {
+  button.addEventListener("click", (event) => {
     if (photo.preview) return;
     if (!selecting) {
       openSheet(photo);
       return;
     }
-    if (picked.has(photo.id)) picked.delete(photo.id);
-    else picked.add(photo.id);
+    const ids = folderPhotos().map((item) => item.id);
+    if (event.shiftKey && anchor && ids.includes(anchor)) {
+      event.preventDefault();
+      const start = ids.indexOf(anchor);
+      const end = ids.indexOf(photo.id);
+      const from = Math.min(start, end);
+      const to = Math.max(start, end);
+      for (let index = from; index <= to; index += 1) picked.add(ids[index]);
+    } else if (picked.has(photo.id)) {
+      picked.delete(photo.id);
+    } else {
+      picked.add(photo.id);
+    }
+    anchor = photo.id;
     render();
   });
   return button;
+}
+
+function folderPhotos() {
+  const album = currentAlbum();
+  return state.photos.filter((photo) => album && photo.album_id === album.id && !photo.preview);
 }
 
 function openSheet(photo) {
@@ -464,7 +484,15 @@ document.getElementById("send-tv").addEventListener("click", async () => {
 
 document.getElementById("select-toggle").addEventListener("click", () => {
   selecting = !selecting;
-  if (!selecting) picked.clear();
+  if (!selecting) {
+    picked.clear();
+    anchor = "";
+  }
+  render();
+});
+
+document.getElementById("select-all").addEventListener("click", () => {
+  folderPhotos().forEach((photo) => picked.add(photo.id));
   render();
 });
 
@@ -477,6 +505,7 @@ document.getElementById("select-delete").addEventListener("click", async () => {
     await api("api/remove", { ids });
     selecting = false;
     picked.clear();
+    anchor = "";
     note(ids.length === 1 ? "Removed from the TV." : "Removed " + ids.length + " pictures.", false);
     await refresh();
   } catch (err) {
