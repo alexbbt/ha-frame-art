@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.10
+
+### Fixes
+
+- set the photos beside the controls and add a favicon (`b8e9a39`)
+
+
 ## 0.3.9
 
 ### Fixes
