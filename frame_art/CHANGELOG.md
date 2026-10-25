@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.5
+
+### Fixes
+
+- read every preview file the TV sends (`e3ab07f`)
+
+
 ## 0.3.4
 
 ### Fixes
