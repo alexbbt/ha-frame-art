@@ -1,4 +1,4 @@
-const folderEl = document.getElementById("folder");
+const albumsEl = document.getElementById("albums");
 const titleEl = document.getElementById("title");
 const statusEl = document.getElementById("status");
 const gridEl = document.getElementById("grid");
@@ -29,9 +29,80 @@ let state = { albums: [], photos: [], playing: null, playing_album_id: null, con
 let controls = null;
 let selected = "";
 let sending = false;
+let wakeHold = 0;
+let wakeSentinel = null;
+let wakeAcquiring = false;
+let wakeVisibilityListening = false;
+
+function notifyKeepAwake(enabled) {
+  try {
+    const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers["keep-awake"];
+    if (handler && handler.postMessage) handler.postMessage({ enabled: Boolean(enabled) });
+  } catch (err) {
+    // The iOS app bridge is optional.
+  }
+  try {
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: "bell-towne:keep-awake", enabled: Boolean(enabled) }, "*");
+    }
+  } catch (err) {
+    // A parent frame is optional.
+  }
+}
+
+async function requestWakeLock() {
+  if (wakeHold <= 0 || wakeAcquiring) return;
+  notifyKeepAwake(true);
+  if (!navigator.wakeLock || !navigator.wakeLock.request) return;
+  if (wakeSentinel && !wakeSentinel.released) return;
+  if (document.visibilityState !== "visible") return;
+  wakeAcquiring = true;
+  try {
+    wakeSentinel = await navigator.wakeLock.request("screen");
+    wakeSentinel.addEventListener("release", () => {
+      wakeSentinel = null;
+    });
+  } catch (err) {
+    wakeSentinel = null;
+  } finally {
+    wakeAcquiring = false;
+  }
+}
+
+function releaseWakeLock() {
+  notifyKeepAwake(false);
+  const current = wakeSentinel;
+  wakeSentinel = null;
+  if (!current) return;
+  current.release().catch(() => {});
+}
+
+function syncWakeLock(shouldHold) {
+  if (shouldHold) {
+    if (wakeHold === 0) {
+      wakeHold = 1;
+      if (!wakeVisibilityListening) {
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible" && wakeHold > 0) requestWakeLock();
+        });
+        wakeVisibilityListening = true;
+      }
+      requestWakeLock();
+    }
+    return;
+  }
+  if (wakeHold > 0) {
+    wakeHold = 0;
+    releaseWakeLock();
+  }
+}
+
+window.addEventListener("pagehide", () => syncWakeLock(false));
 let applying = false;
 let openPhoto = null;
 let ready = new Set();
+let loadingPreviews = false;
+let warmToken = 0;
 
 function note(text, isError) {
   message.hidden = !text;
@@ -67,21 +138,32 @@ function fillStay(current) {
   if (current) minutesEl.value = String(current);
 }
 
+function needsPreviews(album) {
+  if (!album) return false;
+  return state.photos.some((photo) => photo.album_id === album.id && photo.content_id && !ready.has(photo.content_id));
+}
+
 function render() {
   const album = currentAlbum();
   selected = album ? album.id : "";
   titleEl.textContent = album ? album.name : "Photos";
-  if (state.playing === "all") statusEl.textContent = "Every photo is rotating";
+  if (loadingPreviews) statusEl.textContent = "Loading previews";
+  else if (state.playing === "all") statusEl.textContent = "Every photo is rotating";
   else if (state.playing === "album" && state.playing_album_id === selected) statusEl.textContent = "This folder is rotating";
   else statusEl.textContent = "Not rotating";
 
-  folderEl.replaceChildren();
+  albumsEl.replaceChildren();
   state.albums.forEach((item) => {
-    const option = document.createElement("option");
-    option.value = item.id;
-    option.textContent = item.name;
-    option.selected = item.id === selected;
-    folderEl.appendChild(option);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "album" + (item.id === selected ? " current" : "");
+    button.textContent = item.name;
+    button.addEventListener("click", () => {
+      if (item.id === selected) return;
+      selected = item.id;
+      showCurrent();
+    });
+    albumsEl.appendChild(button);
   });
   document.getElementById("delete-folder").hidden = state.albums.length < 2;
 
@@ -111,6 +193,8 @@ function card(photo) {
   thumb.className = "thumb";
   if (photo.content_id && ready.has(photo.content_id)) {
     thumb.style.backgroundImage = "url('thumb/" + encodeURIComponent(photo.content_id) + "')";
+  } else if (loadingPreviews && photo.content_id) {
+    thumb.classList.add("waiting");
   }
   const caption = document.createElement("span");
   caption.textContent = photo.name;
@@ -136,19 +220,35 @@ function openSheet(photo) {
 
 async function warm(albumId) {
   if (!albumId) return;
-  const response = await fetch("api/previews?album=" + encodeURIComponent(albumId));
+  const response = await fetch("api/previews?album=" + encodeURIComponent(albumId), {
+    signal: AbortSignal.timeout(20000),
+  });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return;
   (data.ready || []).forEach((id) => ready.add(id));
+}
+
+async function showCurrent() {
+  const token = ++warmToken;
+  const album = currentAlbum();
+  loadingPreviews = needsPreviews(album);
+  render();
+  if (!album || !loadingPreviews) return;
+  try {
+    await warm(album.id);
+  } catch (err) {
+    // The names stay up when previews are slow or missing.
+  }
+  if (token !== warmToken) return;
+  loadingPreviews = false;
+  render();
 }
 
 async function refresh() {
   const response = await fetch("api/status");
   state = await response.json();
   if (!state.configured) note("Set the TV address in the app options.", true);
-  const album = currentAlbum();
-  if (album) await warm(album.id).catch(() => {});
-  render();
+  await showCurrent();
 }
 
 async function loadControls() {
@@ -204,12 +304,6 @@ async function saveArt(item, value) {
   if (applying) return;
   controls = await api("api/settings", { item, value });
 }
-
-folderEl.addEventListener("change", async () => {
-  selected = folderEl.value;
-  await warm(selected).catch(() => {});
-  render();
-});
 
 document.getElementById("new-folder").addEventListener("click", async () => {
   const name = window.prompt("Folder name");
@@ -337,11 +431,13 @@ async function take(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length || sending) return;
   sending = true;
+  syncWakeLock(true);
   drop.classList.add("busy");
   try {
     await send(files);
   } finally {
     sending = false;
+    syncWakeLock(false);
     drop.classList.remove("busy");
     input.value = "";
   }

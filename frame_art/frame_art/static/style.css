@@ -58,13 +58,36 @@ h1 {
   color: var(--muted);
 }
 
-.folder {
+.albums-row {
   display: flex;
-  gap: 0.5rem;
   align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.35rem;
 }
 
-.folder select { flex: 1; min-width: 0; }
+.albums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.album {
+  border: 0;
+  background: transparent;
+  padding: 0.2rem 0 0.35rem;
+  font: inherit;
+  font-size: 1.05rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.album.current {
+  color: var(--ink);
+  font-weight: 650;
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
 
 select, input[type="text"] {
   appearance: none;
@@ -144,6 +167,17 @@ select, input[type="text"] {
   border-radius: 1rem;
   background: #e4dfd6 center/cover no-repeat;
   box-shadow: var(--shadow);
+}
+
+.thumb.waiting {
+  background-image: linear-gradient(100deg, #e4dfd6 30%, #f7f4ee 50%, #e4dfd6 70%);
+  background-size: 200% 100%;
+  animation: waiting 1.1s ease-in-out infinite;
+}
+
+@keyframes waiting {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
 }
 
 .card span {

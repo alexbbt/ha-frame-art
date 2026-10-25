@@ -116,6 +116,18 @@ class FrameTV:
             if sub_event is None or payload.get("event") in {None, "*", sub_event}:
                 return payload
 
+    def _connection_ready(self, request_id: str) -> dict:
+        """Keep reading until the TV sends the preview socket, or an inline image."""
+        for _ in range(8):
+            payload = self._wait(request_id, "ready_to_use")
+            inline = payload.get("binary")
+            if isinstance(inline, (bytes, bytearray)) and inline:
+                return payload
+            info = _conn_info(payload)
+            if info.get("ip") and info.get("port"):
+                return payload
+        raise TVError("The TV did not send a preview")
+
     def upload(self, jpeg: bytes, matte: str = "none") -> str:
         if not self.api_version:
             self.api_version = self._api_version()
@@ -249,6 +261,10 @@ class FrameTV:
                 "id": request_id,
             },
         )
+        info = _conn_info(ready)
+        inline = ready.get("binary")
+        if not (info.get("ip") and info.get("port")) and not isinstance(inline, (bytes, bytearray)):
+            ready = self._connection_ready(request_id)
         inline = ready.get("binary")
         if isinstance(inline, (bytes, bytearray)) and inline and len(ids) == 1:
             return {ids[0]: bytes(inline)}
@@ -438,6 +454,7 @@ def _open_d2d(info: dict):
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
             sock = context.wrap_socket(sock, server_hostname=host)
+        sock.settimeout(20)
         return sock
     except Exception:
         sock.close()

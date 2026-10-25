@@ -223,15 +223,8 @@ def _previews(app: App, album_id: str) -> dict:
             with app.connect() as tv:
                 try:
                     found = tv.thumbnails(missing)
-                    if not found:
-                        raise TVError("No preview")
                 except TVError:
                     found = {}
-                    for content_id in missing:
-                        try:
-                            found[content_id] = tv.thumbnail(content_id)
-                        except TVError:
-                            continue
         for content_id, data in found.items():
             if content_id in missing and _image(data):
                 app.thumbs[content_id] = data

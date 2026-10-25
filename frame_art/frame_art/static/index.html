@@ -13,13 +13,13 @@
       <div>
         <p class="eyebrow">Frame Art</p>
         <h1 id="title">Photos</h1>
-        <p id="status" class="status"></p>
-      </div>
-      <div class="folder">
-        <select id="folder" aria-label="Folder"></select>
-        <button id="new-folder" type="button" class="icon" aria-label="New folder">+</button>
+        <p id="status" class="status">Loading</p>
       </div>
     </header>
+    <div class="albums-row">
+      <nav id="albums" class="albums" aria-label="Albums"></nav>
+      <button id="new-folder" type="button" class="icon" aria-label="New folder">+</button>
+    </div>
 
     <label id="drop" class="add">
       <input id="files" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple />
