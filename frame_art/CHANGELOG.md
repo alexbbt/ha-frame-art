@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+### Features
+
+- show Frame pictures and the TV settings on a simpler page (`b79d349`)
+
+
 ## 0.2.1
 
 ### Fixes
