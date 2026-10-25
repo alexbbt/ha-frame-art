@@ -57,10 +57,18 @@ button {
 }
 
 .wrap {
+  display: flex;
+  flex-direction: column;
   width: min(1120px, calc(100% - 2rem));
   margin: 0 auto;
   padding: calc(1.25rem + env(safe-area-inset-top)) 0 calc(3rem + env(safe-area-inset-bottom));
 }
+
+.side { display: contents; }
+
+.stage { order: 1; }
+
+.settings { order: 2; }
 
 @media (min-width: 900px) {
   .wrap {
@@ -72,10 +80,16 @@ button {
     padding-top: calc(2.25rem + env(safe-area-inset-top));
   }
 
-  .stage {
-    grid-column: 2;
-    grid-row: 1 / span 5;
+  .side {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
+
+  .stage,
+  .settings { order: 0; }
+
+  .stage { min-width: 0; }
 
   .select-bar { margin-top: 0; }
 

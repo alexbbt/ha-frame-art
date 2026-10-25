@@ -17,6 +17,7 @@
 </head>
 <body>
   <div class="wrap">
+    <div class="side">
     <header>
       <h1 id="title">Photos</h1>
       <p id="status" class="status">Loading</p>
@@ -37,15 +38,6 @@
       <span id="add-label">Add photos</span>
     </label>
     <p id="message" class="message" hidden></p>
-
-    <div class="stage">
-      <div class="select-bar">
-        <button id="select-toggle" type="button">Select</button>
-        <p id="select-count" hidden></p>
-        <button id="select-delete" type="button" class="danger" hidden>Remove from the TV</button>
-      </div>
-      <section id="grid" class="grid" aria-label="Photos"></section>
-    </div>
 
     <section class="settings">
       <h2>On the TV</h2>
@@ -107,6 +99,16 @@
       </form>
       <button id="delete-folder" type="button" class="quiet" hidden>Delete this folder</button>
     </section>
+    </div>
+
+    <div class="stage">
+      <div class="select-bar">
+        <button id="select-toggle" type="button">Select</button>
+        <p id="select-count" hidden></p>
+        <button id="select-delete" type="button" class="danger" hidden>Remove from the TV</button>
+      </div>
+      <section id="grid" class="grid" aria-label="Photos"></section>
+    </div>
   </div>
 
   <dialog id="sheet">
