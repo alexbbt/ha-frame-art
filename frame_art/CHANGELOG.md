@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+### Fixes
+
+- show each picture on the page while the rest are still saving (`749569b`)
+
+
 ## 0.4.0
 
 ### Features
