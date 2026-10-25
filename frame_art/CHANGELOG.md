@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.8
+
+### Fixes
+
+- open the folder that is already playing (`ee01ad3`)
+
+
 ## 0.3.7
 
 ### Fixes
