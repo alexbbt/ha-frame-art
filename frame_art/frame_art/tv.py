@@ -117,6 +117,8 @@ class FrameTV:
             if event != "d2d_service_message":
                 if binary and not event:
                     return {"binary": binary}
+                if deadline is not None:
+                    print(f"Frame Art skipped {event or 'message'}", flush=True)
                 continue
             payload = _payload(frame)
             if binary:
@@ -125,6 +127,8 @@ class FrameTV:
             if payload.get("event") != "thumbnail":
                 message_id = payload.get("request_id", payload.get("id"))
                 if request_id and message_id not in {None, request_id}:
+                    if deadline is not None:
+                        print(f"Frame Art skipped {payload.get('event') or 'reply'}", flush=True)
                     continue
             if payload.get("event") == "error":
                 named = _request_of(payload)
@@ -312,20 +316,13 @@ class FrameTV:
                 waiting = ""
             info = _conn_info(payload)
             if info.get("ip") and info.get("port") and len(found) < len(ids):
+                print(f"Frame Art downloading {len(ids)} previews", flush=True)
                 try:
                     for key, data in _recv_thumbnail_list(info).items():
                         _keep_named(found, key, data)
                 except (OSError, TVError, json.JSONDecodeError):
                     pass
                 break
-        deadline = time.monotonic() + 12
-        for content_id in ids:
-            if content_id in found or time.monotonic() > deadline:
-                continue
-            try:
-                found[content_id] = self.thumbnail(content_id)
-            except TVError:
-                continue
         return {content_id: found[content_id] for content_id in ids if content_id in found}
 
     def play_folder(self, content_ids: list[str], minutes: int, *, shuffle: bool = True) -> bool:
@@ -581,9 +578,8 @@ def _recv_thumbnail_list(info: dict) -> dict[str, bytes]:
     sock = _open_d2d(info)
     found: dict[str, bytes] = {}
     try:
-        total = 1
-        current = -1
-        while current + 1 < total:
+        expected = None
+        while expected is None or len(found) < expected:
             header_len = int.from_bytes(_recv_exact(sock, 4), "big")
             if header_len <= 0 or header_len > 1_000_000:
                 raise TVError("The TV did not send a preview")
@@ -594,8 +590,9 @@ def _recv_thumbnail_list(info: dict) -> dict[str, bytes]:
             data = _recv_exact(sock, size)
             name = str(header.get("fileID") or header.get("fileName") or len(found))
             found[name] = data
-            current = int(header.get("num") or 0)
-            total = int(header.get("total") or 1)
+            expected = int(header.get("total") or len(found))
+            if len(found) >= 40:
+                break
         return found
     finally:
         sock.close()
