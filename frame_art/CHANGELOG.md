@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4
+
+### Fixes
+
+- open secured TV preview downloads with TLS from the start (`e2728ec`)
+
+
 ## 0.3.3
 
 ### Fixes
