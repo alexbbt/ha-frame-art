@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.12
+
+### Fixes
+
+- remove several pictures in one selection (`e68b2b6`)
+
+
 ## 0.3.11
 
 ### Fixes
