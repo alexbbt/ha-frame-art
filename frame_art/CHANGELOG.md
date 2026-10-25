@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1
+
+### Fixes
+
+- fill the selection mark and select a range or every photo (`40157ad`)
+
+
 ## 0.5.0
 
 ### Features
