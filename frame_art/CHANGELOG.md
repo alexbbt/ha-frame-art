@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+### Features
+
+- save pictures on the add-on before sending them to the TV (`d6c55ce`)
+
+
 ## 0.3.13
 
 ### Fixes
