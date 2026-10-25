@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3
+
+### Fixes
+
+- read preview images from the TV thumbnail message (`2130da6`)
+
+
 ## 0.3.2
 
 ### Fixes
