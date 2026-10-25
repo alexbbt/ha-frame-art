@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+### Features
+
+- choose whether new photos keep their shape or fill the screen (`bbd64a3`)
+
+
 ## 0.4.1
 
 ### Fixes

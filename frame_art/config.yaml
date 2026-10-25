@@ -1,6 +1,6 @@
 ---
 name: Frame Art
-version: "0.4.1"
+version: "0.5.0"
 slug: frame_art
 description: >-
   Upload, delete, and sort your own Samsung Frame pictures into folders.
