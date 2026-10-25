@@ -272,6 +272,24 @@ class FrameTV:
         return _recv_thumbnail(_conn_info(ready))
 
     def thumbnails(self, content_ids: list[str]) -> dict[str, bytes]:
+        ids = []
+        seen = set()
+        for content_id in content_ids:
+            if content_id and content_id not in seen:
+                seen.add(content_id)
+                ids.append(content_id)
+        if not ids:
+            return {}
+        # Store art closes the preview socket for the whole request.
+        own = [content_id for content_id in ids if not content_id.startswith("SAM-S")]
+        found = self._thumbnail_batch(own) if own else {}
+        missing = [content_id for content_id in own if content_id not in found]
+        if len(missing) > 1 or (missing and len(own) > 1):
+            for content_id in missing:
+                found.update(self._thumbnail_batch([content_id]))
+        return {content_id: found[content_id] for content_id in ids if content_id in found}
+
+    def _thumbnail_batch(self, content_ids: list[str]) -> dict[str, bytes]:
         ids = [content_id for content_id in content_ids if content_id]
         if not ids:
             return {}
@@ -323,7 +341,7 @@ class FrameTV:
                 except (OSError, TVError, json.JSONDecodeError):
                     pass
                 break
-        return {content_id: found[content_id] for content_id in ids if content_id in found}
+        return found
 
     def play_folder(self, content_ids: list[str], minutes: int, *, shuffle: bool = True) -> bool:
         """Make Favorites equal this set and rotate it. Returns whether one is on screen."""
