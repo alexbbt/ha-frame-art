@@ -26,6 +26,9 @@ htmlcov/
 *.token
 secrets.yaml
 
+# Local notes
+TODO.md
+
 # OS / editor
 .DS_Store
 Thumbs.db
