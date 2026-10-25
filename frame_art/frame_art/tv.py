@@ -76,7 +76,7 @@ class FrameTV:
         req_id = request_id or str(uuid.uuid4())
         body = {"request": name, "id": req_id, "request_id": req_id, **params}
         self.ws.send_text(art_message(body))
-        return self._wait(req_id, wait_for)
+        return self._wait(req_id, wait_for, name)
 
     def _api_version(self) -> str:
         try:
@@ -86,7 +86,7 @@ class FrameTV:
         version = payload.get("version") if isinstance(payload, dict) else None
         return str(version or "")
 
-    def _wait(self, request_id: str | None, sub_event: str | None) -> dict:
+    def _wait(self, request_id: str | None, sub_event: str | None, request_name: str = "") -> dict:
         while True:
             try:
                 raw = self.ws.recv()
@@ -112,7 +112,10 @@ class FrameTV:
             if request_id and message_id not in {None, request_id}:
                 continue
             if payload.get("event") == "error":
-                raise TVError("The TV refused that request")
+                named = _request_of(payload)
+                if named and request_name and named != request_name:
+                    continue
+                raise _refused(payload, request_name)
             if sub_event is None or payload.get("event") in {None, "*", sub_event}:
                 return payload
 
@@ -188,12 +191,15 @@ class FrameTV:
         )
 
     def slideshow(self, category_id: str, minutes: int, *, shuffle: bool = True) -> None:
-        self.request(
-            "set_slideshow_status",
-            value="off" if minutes <= 0 else str(minutes),
-            category_id=category_id,
-            type="shuffleslideshow" if shuffle else "slideshow",
-        )
+        fields = {
+            "value": "off" if minutes <= 0 else str(minutes),
+            "category_id": category_id,
+            "type": "shuffleslideshow" if shuffle else "slideshow",
+        }
+        try:
+            self.request("set_slideshow_status", **fields)
+        except TVError:
+            self.request("set_auto_rotation_status", **fields)
 
     def show(self, content_id: str) -> None:
         self.request(
@@ -289,7 +295,10 @@ class FrameTV:
         for content_id in turn_on:
             self.set_favorite(content_id, True)
         for content_id in turn_off:
-            self.set_favorite(content_id, False)
+            try:
+                self.set_favorite(content_id, False)
+            except TVError as err:
+                print(f"Frame Art left {content_id} favorite: {err}", flush=True)
         self.slideshow(FAVORITES, minutes, shuffle=shuffle)
         if not content_ids:
             return False
@@ -301,6 +310,28 @@ class FrameTV:
 
     def play_all(self, minutes: int, *, shuffle: bool = True) -> None:
         self.slideshow(MY_PHOTOS, minutes, shuffle=shuffle)
+
+
+def _request_of(payload: dict) -> str:
+    raw = payload.get("request_data")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            return ""
+    if isinstance(raw, dict):
+        return str(raw.get("request") or "")
+    return ""
+
+
+def _refused(payload: dict, request_name: str) -> TVError:
+    named = _request_of(payload) or request_name or "that request"
+    code = payload.get("error_code")
+    detail = f"The TV refused {named}"
+    if code not in (None, ""):
+        detail += f" ({code})"
+    print(f"Frame Art TV error: {detail}", flush=True)
+    return TVError(detail)
 
 
 def slideshow_view(payload: dict) -> dict:
