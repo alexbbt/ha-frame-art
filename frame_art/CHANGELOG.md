@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.13
+
+### Fixes
+
+- keep the sidebar compact after a photo is removed (`f1ff85b`)
+
+
 ## 0.3.12
 
 ### Fixes
