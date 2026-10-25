@@ -23,6 +23,21 @@ def safe_filename(name: str) -> str:
     return stem[:80] + suffix
 
 
+def sniff_image(data: bytes) -> str:
+    """Return a suffix from the file bytes, or an empty string."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if len(data) > 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if len(data) > 12 and data[4:8] == b"ftyp":
+        brand = data[8:12]
+        if brand in {b"heic", b"heix", b"hevc", b"heif", b"mif1", b"msf1"}:
+            return ".heic"
+    return ""
+
+
 def looks_like_image(data: bytes, suffix: str) -> bool:
     if suffix in {".jpg", ".jpeg"}:
         return data.startswith(b"\xff\xd8\xff")

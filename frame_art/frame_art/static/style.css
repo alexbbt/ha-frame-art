@@ -60,6 +60,7 @@ h2 {
 }
 
 .drop.over { border-color: var(--accent); background: #f3f7f4; }
+.drop.busy { opacity: 0.7; }
 
 .drop input {
   position: absolute;

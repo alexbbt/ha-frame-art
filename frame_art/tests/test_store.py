@@ -53,3 +53,12 @@ class StoreTests(unittest.TestCase):
             second = save_upload(inbox, "a.jpg", JPEG)
             self.assertEqual(first, "a.jpg")
             self.assertEqual(second, "a-2.jpg")
+
+
+class SniffTests(unittest.TestCase):
+    def test_iphone_photo_named_jpg_is_still_heic(self) -> None:
+        from frame_art.store import sniff_image
+
+        heic = b"\x00\x00\x00\x18ftypheic" + b"rest"
+        self.assertEqual(sniff_image(heic), ".heic")
+        self.assertEqual(sniff_image(JPEG), ".jpg")

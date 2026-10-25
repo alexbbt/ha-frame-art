@@ -117,6 +117,33 @@ class PageTests(unittest.TestCase):
                 httpd.server_close()
                 thread.join(timeout=3)
 
+    def test_one_bad_picture_does_not_drop_the_rest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeTV()
+            app = App(Library(Path(tmp) / "library.json"), lambda: _connect(fake))
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(app))
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            port = httpd.server_address[1]
+            try:
+                import frame_art.server as server
+
+                def prepare(filename, data):
+                    if filename.startswith("bad"):
+                        raise ValueError("Could not read that picture")
+                    return ("ok.jpg", JPEG)
+
+                server.prepare_image = prepare
+                body, content_type = _multipart_many([("bad.jpg", b"nope"), ("ok.jpg", JPEG)])
+                result = _raw(port, "/upload?album=", body, content_type)
+                self.assertEqual(result["saved"], ["ok.jpg"])
+                self.assertEqual(result["failed"][0]["name"], "bad.jpg")
+                self.assertIn("Could not read", result["failed"][0]["error"])
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
 
 class FakeTV:
     def __init__(self) -> None:
@@ -209,11 +236,17 @@ def _raw(port: int, path: str, body: bytes, content_type: str) -> dict:
 
 
 def _multipart(filename: str, data: bytes) -> tuple[bytes, str]:
-    body = (
-        b"--bound\r\n"
-        + f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode()
-        + b"Content-Type: image/jpeg\r\n\r\n"
-        + data
-        + b"\r\n--bound--\r\n"
-    )
-    return body, "multipart/form-data; boundary=bound"
+    return _multipart_many([(filename, data)])
+
+
+def _multipart_many(files: list[tuple[str, bytes]]) -> tuple[bytes, str]:
+    chunks = []
+    for filename, data in files:
+        chunks.append(
+            b"--bound\r\n"
+            + f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode()
+            + b"Content-Type: image/jpeg\r\n\r\n"
+            + data
+            + b"\r\n"
+        )
+    return b"".join(chunks) + b"--bound--\r\n", "multipart/form-data; boundary=bound"

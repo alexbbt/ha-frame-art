@@ -61,6 +61,11 @@ def parse_files(content_type: str, body: bytes) -> list[tuple[str, bytes]]:
 
 
 def _filename(header: str) -> str | None:
+    encoded = re.search(r"filename\*=([^']*)''([^;\r\n]+)", header, re.IGNORECASE)
+    if encoded is not None:
+        name = unquote(encoded.group(2).strip())
+        if name:
+            return name
     match = re.search(r'filename="([^"]*)"', header, re.IGNORECASE)
     if match is None:
         match = re.search(r"filename=([^;\r\n]+)", header, re.IGNORECASE)
@@ -98,20 +103,20 @@ def handler_for(app: App):
                 self._json(400, {"error": "That request was incomplete"})
                 return
             if length < 0 or length > MAX_BODY:
-                self._json(400, {"error": "That upload is empty or larger than 80 MB"})
+                self._json(400, {"error": "That picture is larger than 80 MB. Send fewer at a time."})
                 return
             body = self.rfile.read(length) if length else b""
             try:
                 if parsed.path == "/upload":
                     album_id = parse_qs(parsed.query).get("album", [""])[0]
-                    saved = _upload(app, album_id, self.headers.get("Content-Type", ""), body)
-                    self._json(200, {"saved": saved})
+                    self._json(200, _upload(app, album_id, self.headers.get("Content-Type", ""), body))
                     return
                 payload = json.loads(body.decode("utf-8") or "{}")
                 result = _action(app, parsed.path, payload)
             except (ValueError, TVError, json.JSONDecodeError, OSError) as err:
-                message = str(err) if isinstance(err, (ValueError, TVError)) else "Could not save that picture"
-                self._json(400, {"error": message})
+                message = str(err).strip() if isinstance(err, (ValueError, TVError)) else "Could not save that picture"
+                print(f"Frame Art request failed: {err}", flush=True)
+                self._json(400, {"error": message or "Could not save that picture"})
                 return
             self._json(200, result)
 
@@ -143,21 +148,30 @@ def handler_for(app: App):
     return Handler
 
 
-def _upload(app: App, album_id: str, content_type: str, body: bytes) -> list[str]:
+def _upload(app: App, album_id: str, content_type: str, body: bytes) -> dict:
+    """Save every picture. One failure does not drop the rest."""
     files = parse_files(content_type, body)
-    prepared = [prepare_image(filename, data) for filename, data in files]
     if not album_id:
         album_id = app.library.ensure_album()
     saved: list[str] = []
+    failed: list[dict[str, str]] = []
     with app.lock:
         with app.connect() as tv:
-            for display, jpeg in prepared:
-                content_id = tv.upload(jpeg)
-                photo = app.library.add_photo(album_id, display, content_id)
-                saved.append(photo["name"])
-                if app.library.status().get("playing_album_id") == album_id:
-                    tv.set_favorite(content_id, True)
-    return saved
+            for filename, data in files:
+                label = Path(filename or "picture").name or "picture"
+                try:
+                    display, jpeg = prepare_image(filename, data)
+                    content_id = tv.upload(jpeg)
+                    photo = app.library.add_photo(album_id, display, content_id)
+                    saved.append(photo["name"])
+                    del jpeg
+                    if app.library.status().get("playing_album_id") == album_id:
+                        tv.set_favorite(content_id, True)
+                except Exception as err:
+                    message = str(err).strip() or "Could not save that picture"
+                    print(f"Frame Art could not save {label}: {message}", flush=True)
+                    failed.append({"name": label, "error": message})
+    return {"saved": saved, "failed": failed}
 
 
 def _action(app: App, path: str, payload: dict) -> dict:

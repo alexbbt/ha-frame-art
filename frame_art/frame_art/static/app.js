@@ -108,22 +108,56 @@ async function refresh() {
 
 async function send(files) {
   const album = currentAlbum();
-  if (!album) return;
-  const body = new FormData();
-  Array.from(files).forEach((file) => body.append("file", file));
-  note("Sending to the TV…", false);
-  const response = await fetch("upload?album=" + encodeURIComponent(album.id), {
-    method: "POST",
-    body,
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    note(data.error || "Could not save that picture", true);
-    await refresh();
+  const list = Array.from(files || []);
+  if (!album || !list.length) return;
+  const saved = [];
+  const failed = [];
+  for (let index = 0; index < list.length; index += 1) {
+    const file = list[index];
+    const label = file.name || "picture";
+    note("Saving " + (index + 1) + " of " + list.length + "…", false);
+    try {
+      const body = new FormData();
+      body.append("file", file, label);
+      const response = await fetch("upload?album=" + encodeURIComponent(album.id), {
+        method: "POST",
+        body,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        failed.push(label + ": " + (data.error || "Could not save that picture"));
+        if (stopBatch(data.error)) break;
+        continue;
+      }
+      saved.push(...(data.saved || []));
+      (data.failed || []).forEach((item) => {
+        failed.push((item.name || label) + ": " + (item.error || "Could not save that picture"));
+      });
+    } catch (err) {
+      failed.push(label + ": the phone lost the connection");
+      break;
+    }
+  }
+  await refresh().catch(() => {});
+  if (!failed.length) {
+    note("Saved " + saved.length + (saved.length === 1 ? " picture" : " pictures") + " on the TV.", false);
     return;
   }
-  note("Saved on the TV.", false);
-  await refresh();
+  const summary = failed.slice(0, 3).join(" ");
+  if (saved.length) {
+    note("Saved " + saved.length + " of " + list.length + ". " + summary, true);
+    return;
+  }
+  note(summary, true);
+}
+
+function stopBatch(error) {
+  const text = error || "";
+  return (
+    text.indexOf("Could not reach the TV") !== -1 ||
+    text.indexOf("Accept Frame Art") !== -1 ||
+    text.indexOf("Set the TV address") !== -1
+  );
 }
 
 async function removePhoto(photo) {
@@ -228,10 +262,27 @@ albumsEl.addEventListener("dblclick", () => {
   document.getElementById("rename").click();
 });
 
-drop.addEventListener("click", () => input.click());
+let sending = false;
+
+async function take(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length || sending) return;
+  sending = true;
+  drop.classList.add("busy");
+  try {
+    await send(files);
+  } finally {
+    sending = false;
+    drop.classList.remove("busy");
+    input.value = "";
+  }
+}
+
+drop.addEventListener("click", () => {
+  if (!sending) input.click();
+});
 input.addEventListener("change", () => {
-  if (input.files && input.files.length) send(input.files);
-  input.value = "";
+  take(input.files);
 });
 ["dragover", "dragenter"].forEach((name) => {
   drop.addEventListener(name, (event) => {
@@ -247,7 +298,7 @@ input.addEventListener("change", () => {
 });
 drop.addEventListener("drop", (event) => {
   if (event.dataTransfer && event.dataTransfer.files.length) {
-    send(event.dataTransfer.files);
+    take(event.dataTransfer.files);
   }
 });
 
