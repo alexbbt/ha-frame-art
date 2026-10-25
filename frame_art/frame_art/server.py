@@ -228,6 +228,11 @@ def _previews(app: App, album_id: str) -> dict:
         for content_id, data in found.items():
             if content_id in missing and _image(data):
                 app.thumbs[content_id] = data
+        ready_now = [content_id for content_id in missing if content_id in app.thumbs]
+        if ready_now:
+            print(f"Frame Art saved {len(ready_now)} previews", flush=True)
+        elif missing:
+            print(f"Frame Art saved no previews for {len(missing)} pictures", flush=True)
     return {"ready": [content_id for content_id in ids if content_id in app.thumbs]}
 
 

@@ -32,17 +32,45 @@ def encode_frame(opcode: int, payload: bytes, mask: bytes | None) -> bytes:
 
 
 class FrameBuffer:
-    """Pull complete WebSocket frames out of a byte buffer."""
+    """Pull complete WebSocket messages out of a byte buffer."""
 
     def __init__(self) -> None:
         self._buffer = bytearray()
+        self._partial = bytearray()
+        self._partial_opcode: int | None = None
 
     def feed(self, data: bytes) -> None:
         self._buffer += data
 
     def pop(self) -> tuple[int, bytes] | None:
+        while True:
+            parsed = self._take_frame()
+            if parsed is None:
+                return None
+            fin, opcode, payload = parsed
+            if opcode in (0x8, 0x9, 0xA):
+                return opcode, payload
+            if opcode == 0 and self._partial_opcode is not None:
+                self._partial += payload
+                opcode = self._partial_opcode
+            elif opcode in (0x1, 0x2):
+                self._partial = bytearray(payload)
+                self._partial_opcode = opcode
+            else:
+                continue
+            if not fin:
+                continue
+            kind = self._partial_opcode if self._partial_opcode is not None else opcode
+            data = bytes(self._partial)
+            self._partial = bytearray()
+            self._partial_opcode = None
+            return kind, data
+
+    def _take_frame(self) -> tuple[bool, int, bytes] | None:
         if len(self._buffer) < 2:
             return None
+        fin = bool(self._buffer[0] & 0x80)
+        opcode = self._buffer[0] & 0x0F
         length = self._buffer[1] & 0x7F
         offset = 2
         if length == 126:
@@ -69,9 +97,8 @@ class FrameBuffer:
             if len(self._buffer) < offset + length:
                 return None
             payload = bytes(self._buffer[offset : offset + length])
-        opcode = self._buffer[0] & 0x0F
         del self._buffer[: offset + (4 if masked else 0) + length]
-        return opcode, payload
+        return fin, opcode, payload
 
 
 class WebSocket:
@@ -109,6 +136,9 @@ class WebSocket:
             if opcode == 0x2:
                 return payload
             raise ConnectionError("The TV sent an unsupported message")
+
+    def set_timeout(self, seconds: float) -> None:
+        self._sock.settimeout(seconds)
 
     def close(self) -> None:
         try:

@@ -56,6 +56,15 @@ class LibraryTests(unittest.TestCase):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_continuation_frames_join(self) -> None:
+        frames = FrameBuffer()
+        frames.feed(bytes([0x02, 3]) + b"abc")
+        self.assertIsNone(frames.pop())
+        frames.feed(bytes([0x80, 3]) + b"def")
+        opcode, payload = frames.pop()
+        self.assertEqual(opcode, 2)
+        self.assertEqual(payload, b"abcdef")
+
     def test_frame_round_trip(self) -> None:
         encoded = encode_frame(1, b'{"ok":true}', b"abcd")
         frames = FrameBuffer()
@@ -98,6 +107,41 @@ class ProtocolTests(unittest.TestCase):
         )
         message = json.loads(art_message({"request": "get_content_list"}))
         self.assertEqual(message["method"], "ms.channel.emit")
+
+    def test_thumbnail_bytes_follow_the_json(self) -> None:
+        porch = b"\xff\xd8\xff\xe0porch\xff\xd9"
+        kitchen = b"\xff\xd8\xff\xe0kitchen\xff\xd9"
+        script = Scripted(
+            [
+                _inline_thumb("MY_F0002", porch),
+                _inline_thumb("MY_F0003", kitchen),
+            ]
+        )
+        found = FrameTV(script, d2d_send=lambda *_args: None).thumbnails(["MY_F0002", "MY_F0003"])
+        self.assertEqual(found, {"MY_F0002": porch, "MY_F0003": kitchen})
+        sent = json.loads(json.loads(script.sent[0])["params"]["data"])
+        self.assertEqual(sent["request"], "get_thumbnail_list")
+        self.assertEqual(len(script.sent), 1)
+
+    def test_several_thumbnails_can_share_one_frame(self) -> None:
+        porch = b"\xff\xd8\xff\xe0porch\xff\xd9"
+        kitchen = b"\xff\xd8\xff\xe0kitchen\xff\xd9"
+        script = Scripted([_inline_thumb("MY_F0002", porch) + _inline_thumb("MY_F0003", kitchen)])
+        found = FrameTV(script, d2d_send=lambda *_args: None).thumbnails(["MY_F0002", "MY_F0003"])
+        self.assertEqual(found, {"MY_F0002": porch, "MY_F0003": kitchen})
+
+    def test_thumbnail_jpeg_can_follow_in_the_next_frame(self) -> None:
+        porch = b"\xff\xd8\xff\xe0porch\xff\xd9"
+        inner = {
+            "id": "0fe2fee4-750f-411b-b612-cc1effb5503b",
+            "event": "thumbnail",
+            "content_id": "MY_F0002",
+            "file_type": "jpg",
+        }
+        notice = json.dumps({"event": "d2d_service_message", "data": json.dumps(inner)})
+        script = Scripted([notice, porch])
+        found = FrameTV(script, d2d_send=lambda *_args: None).thumbnails(["MY_F0002"])
+        self.assertEqual(found, {"MY_F0002": porch})
 
 
 class PageTests(unittest.TestCase):
@@ -219,7 +263,7 @@ class FakeTV:
 
 
 class Scripted:
-    def __init__(self, replies: list[str]) -> None:
+    def __init__(self, replies: list) -> None:
         self.replies = list(replies)
         self.sent: list[str] = []
 
@@ -229,11 +273,23 @@ class Scripted:
     def send_binary(self, payload: bytes) -> None:
         return None
 
-    def recv(self) -> str:
+    def recv(self):
         return self.replies.pop(0)
 
     def close(self) -> None:
         return None
+
+
+def _inline_thumb(content_id: str, image: bytes) -> bytes:
+    """The TV prefix, the thumbnail event, a newline, then the JPEG."""
+    inner = {
+        "id": "0fe2fee4-750f-411b-b612-cc1effb5503b",
+        "event": "thumbnail",
+        "content_id": content_id,
+        "file_type": "jpg",
+    }
+    outer = {"event": "d2d_service_message", "data": json.dumps(inner), "from": "tv"}
+    return b"\x01\x11" + json.dumps(outer).encode("utf-8") + b"\n" + image
 
 
 def _d2d(**data) -> str:

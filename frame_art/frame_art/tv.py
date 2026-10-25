@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import time
 import uuid
 from datetime import datetime
 
@@ -68,6 +69,7 @@ class FrameTV:
         self.ws = ws
         self._d2d_send = d2d_send
         self.api_version = ""
+        self._queued: list[dict] = []
 
     def close(self) -> None:
         self.ws.close()
@@ -88,29 +90,34 @@ class FrameTV:
 
     def _wait(self, request_id: str | None, sub_event: str | None, request_name: str = "") -> dict:
         while True:
-            try:
-                raw = self.ws.recv()
-            except (TimeoutError, ConnectionError, OSError) as err:
-                raise TVError("The TV did not answer") from err
-            if isinstance(raw, (bytes, bytearray)):
-                if raw.startswith(b"\xff\xd8\xff") or raw.startswith(b"\x89PNG"):
-                    return {"binary": bytes(raw)}
-                continue
-            if not isinstance(raw, str):
-                continue
-            try:
-                frame = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
+            if self._queued:
+                frame = self._queued.pop(0)
+            else:
+                try:
+                    raw = self.ws.recv()
+                except (TimeoutError, ConnectionError, OSError) as err:
+                    raise TVError("The TV did not answer") from err
+                frames = _frames_from_tv(raw)
+                if not frames:
+                    continue
+                frame = frames[0]
+                self._queued.extend(frames[1:])
+            binary = frame.pop("binary", None)
             event = frame.get("event", "")
             if event == "ms.channel.unauthorized":
                 raise TVError("Accept Frame Art on the TV screen, then try again")
             if event != "d2d_service_message":
+                if binary and not event:
+                    return {"binary": binary}
                 continue
             payload = _payload(frame)
-            message_id = payload.get("request_id", payload.get("id"))
-            if request_id and message_id not in {None, request_id}:
-                continue
+            if binary:
+                payload["binary"] = binary
+            # A thumbnail's own id is not the request id. Matching it drops the preview.
+            if payload.get("event") != "thumbnail":
+                message_id = payload.get("request_id", payload.get("id"))
+                if request_id and message_id not in {None, request_id}:
+                    continue
             if payload.get("event") == "error":
                 named = _request_of(payload)
                 if named and request_name and named != request_name:
@@ -191,15 +198,12 @@ class FrameTV:
         )
 
     def slideshow(self, category_id: str, minutes: int, *, shuffle: bool = True) -> None:
-        fields = {
-            "value": "off" if minutes <= 0 else str(minutes),
-            "category_id": category_id,
-            "type": "shuffleslideshow" if shuffle else "slideshow",
-        }
-        try:
-            self.request("set_slideshow_status", **fields)
-        except TVError:
-            self.request("set_auto_rotation_status", **fields)
+        self.request(
+            "set_slideshow_status",
+            value="off" if minutes <= 0 else str(minutes),
+            category_id=category_id,
+            type="shuffleslideshow" if shuffle else "slideshow",
+        )
 
     def show(self, content_id: str) -> None:
         self.request(
@@ -250,6 +254,9 @@ class FrameTV:
                 "id": request_id,
             },
         )
+        inline = _image_bytes(ready.get("binary"))
+        if inline:
+            return inline
         return _recv_thumbnail(_conn_info(ready))
 
     def thumbnails(self, content_ids: list[str]) -> dict[str, bytes]:
@@ -257,36 +264,57 @@ class FrameTV:
         if not ids:
             return {}
         request_id = str(uuid.uuid4())
-        ready = self.request(
-            "get_thumbnail_list",
-            request_id=request_id,
-            content_id_list=[{"content_id": content_id} for content_id in ids],
-            conn_info={
-                "d2d_mode": "socket",
-                "connection_id": random.randrange(4 * 1024 * 1024 * 1024),
-                "id": request_id,
-            },
+        self.ws.send_text(
+            art_message(
+                {
+                    "request": "get_thumbnail_list",
+                    "id": request_id,
+                    "request_id": request_id,
+                    "content_id_list": [{"content_id": content_id} for content_id in ids],
+                    "conn_info": {
+                        "d2d_mode": "socket",
+                        "connection_id": random.randrange(4 * 1024 * 1024 * 1024),
+                        "id": request_id,
+                    },
+                }
+            )
         )
-        info = _conn_info(ready)
-        inline = ready.get("binary")
-        if not (info.get("ip") and info.get("port")) and not isinstance(inline, (bytes, bytearray)):
-            ready = self._connection_ready(request_id)
-        inline = ready.get("binary")
-        if isinstance(inline, (bytes, bytearray)) and inline and len(ids) == 1:
-            return {ids[0]: bytes(inline)}
-        found = _recv_thumbnail_list(_conn_info(ready))
-        mapped: dict[str, bytes] = {}
+        setter = getattr(self.ws, "set_timeout", None)
+        if setter:
+            setter(8)
+        found: dict[str, bytes] = {}
+        waiting = ""
+        for _ in range(len(ids) + 2):
+            if len(found) >= len(ids):
+                break
+            try:
+                payload = self._wait(request_id, None, "get_thumbnail_list")
+            except TVError:
+                break
+            _keep_thumb(found, payload)
+            content_id = str(payload.get("content_id") or "")
+            image = _image_bytes(payload.get("binary"))
+            if content_id and image:
+                waiting = ""
+            elif content_id and payload.get("event") == "thumbnail":
+                waiting = content_id
+            elif image and waiting and waiting not in found:
+                found[waiting] = image
+                waiting = ""
+            info = _conn_info(payload)
+            if info.get("ip") and info.get("port") and len(found) < len(ids):
+                for key, data in _recv_thumbnail_list(info).items():
+                    _keep_named(found, key, data)
+                break
+        deadline = time.monotonic() + 12
         for content_id in ids:
-            if content_id in found:
-                mapped[content_id] = found[content_id]
+            if content_id in found or time.monotonic() > deadline:
                 continue
-            for key, data in found.items():
-                if key == content_id or key.startswith(content_id + "."):
-                    mapped[content_id] = data
-                    break
-        if not mapped and len(found) == len(ids):
-            mapped = dict(zip(ids, found.values()))
-        return mapped
+            try:
+                found[content_id] = self.thumbnail(content_id)
+            except TVError:
+                continue
+        return {content_id: found[content_id] for content_id in ids if content_id in found}
 
     def play_folder(self, content_ids: list[str], minutes: int, *, shuffle: bool = True) -> bool:
         """Make Favorites equal this set and rotate it. Returns whether one is on screen."""
@@ -310,6 +338,107 @@ class FrameTV:
 
     def play_all(self, minutes: int, *, shuffle: bool = True) -> None:
         self.slideshow(MY_PHOTOS, minutes, shuffle=shuffle)
+
+
+def _frames_from_tv(raw: str | bytes) -> list[dict]:
+    """Split one socket message into art events. Several previews can share it."""
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        return [parsed] if isinstance(parsed, dict) else []
+    frames: list[dict] = []
+    buf = bytes(raw)
+    for _ in range(40):
+        if not buf:
+            break
+        image, used = _slice_image(buf)
+        if image and used:
+            frames.append({"binary": image})
+            buf = buf[used:]
+            continue
+        start = buf.find(b"{")
+        if start < 0:
+            break
+        end = _json_end(buf, start)
+        if end is None:
+            break
+        try:
+            parsed = json.loads(buf[start:end].decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            break
+        if not isinstance(parsed, dict):
+            break
+        tail = buf[end:]
+        if tail.startswith(b"\n"):
+            tail = tail[1:]
+        image, used = _slice_image(tail)
+        if image and used:
+            parsed["binary"] = image
+            buf = tail[used:]
+        else:
+            buf = b""
+        frames.append(parsed)
+    return frames
+
+
+def _json_end(buf: bytes, start: int) -> int | None:
+    depth = 0
+    for index in range(start, len(buf)):
+        byte = buf[index]
+        if byte == 0x7B:
+            depth += 1
+        elif byte == 0x7D:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _slice_image(buf: bytes) -> tuple[bytes | None, int]:
+    if buf.startswith(b"\xff\xd8\xff"):
+        end = buf.find(b"\xff\xd9")
+        if end < 0:
+            return bytes(buf), len(buf)
+        end += 2
+        return bytes(buf[:end]), end
+    if not buf.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None, 0
+    offset = 8
+    while offset + 8 <= len(buf):
+        length = int.from_bytes(buf[offset : offset + 4], "big")
+        tag = buf[offset + 4 : offset + 8]
+        step = 12 + length
+        if length < 0 or offset + step > len(buf):
+            break
+        offset += step
+        if tag == b"IEND":
+            return bytes(buf[:offset]), offset
+    return bytes(buf), len(buf)
+
+
+def _image_bytes(data) -> bytes | None:
+    if isinstance(data, (bytes, bytearray)) and (
+        bytes(data).startswith(b"\xff\xd8\xff") or bytes(data).startswith(b"\x89PNG")
+    ):
+        return bytes(data)
+    return None
+
+
+def _keep_thumb(found: dict[str, bytes], payload: dict) -> None:
+    image = _image_bytes(payload.get("binary"))
+    content_id = str(payload.get("content_id") or "")
+    if image and content_id:
+        found[content_id] = image
+
+
+def _keep_named(found: dict[str, bytes], key: str, data: bytes) -> None:
+    image = _image_bytes(data)
+    if not image:
+        return
+    content_id = key.split(".", 1)[0]
+    found[content_id] = image
 
 
 def _request_of(payload: dict) -> str:
