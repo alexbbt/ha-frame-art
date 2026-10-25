@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+### Fixes
+
+- keep playing a folder when the TV rejects one slideshow command (`c832f55`)
+
+
 ## 0.3.1
 
 ### Fixes
