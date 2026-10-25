@@ -219,7 +219,9 @@ function card(photo) {
   const thumb = document.createElement("div");
   thumb.className = "thumb";
   const store = photo.content_id && String(photo.content_id).startsWith("SAM-S");
-  if (photo.file) {
+  if (photo.preview) {
+    thumb.style.backgroundImage = "url('" + photo.preview + "')";
+  } else if (photo.file) {
     thumb.style.backgroundImage = "url('file/" + encodeURIComponent(photo.id) + "')";
   } else if (photo.content_id && ready.has(photo.content_id)) {
     thumb.style.backgroundImage = "url('thumb/" + encodeURIComponent(photo.content_id) + "')";
@@ -229,13 +231,14 @@ function card(photo) {
   const caption = document.createElement("span");
   caption.textContent = photo.name;
   button.append(thumb, caption);
-  if (store || (photo.file && !photo.content_id)) {
+  if (photo.preview || store || (photo.file && !photo.content_id)) {
     const hint = document.createElement("span");
     hint.className = "hint";
-    hint.textContent = store ? "Art Store" : "Not on the TV";
+    hint.textContent = photo.preview ? "Saving" : store ? "Art Store" : "Not on the TV";
     button.append(hint);
   }
   button.addEventListener("click", () => {
+    if (photo.preview) return;
     if (!selecting) {
       openSheet(photo);
       return;
@@ -482,6 +485,28 @@ document.getElementById("sheet-remove").addEventListener("click", async () => {
   }
 });
 
+function showIncoming(album, file, label) {
+  const photo = {
+    id: "incoming-" + Math.random().toString(36).slice(2),
+    album_id: album.id,
+    name: label,
+    content_id: "",
+    file: false,
+    preview: URL.createObjectURL(file),
+  };
+  state.photos.unshift(photo);
+  render();
+  const shown = gridEl.querySelector(".card");
+  if (shown) shown.scrollIntoView({ block: "nearest" });
+  return photo;
+}
+
+function forgetIncoming(photo) {
+  if (!photo) return;
+  if (photo.preview) URL.revokeObjectURL(photo.preview);
+  state.photos = state.photos.filter((item) => item.id !== photo.id);
+}
+
 async function send(files) {
   const album = currentAlbum();
   const list = Array.from(files || []);
@@ -493,24 +518,36 @@ async function send(files) {
     const file = list[index];
     const label = file.name || "picture";
     addLabel.textContent = "Saving " + (index + 1) + " of " + list.length;
+    const incoming = showIncoming(album, file, label);
     try {
       const body = new FormData();
       body.append("file", file, label);
       const response = await fetch("upload?album=" + encodeURIComponent(album.id), { method: "POST", body });
       const data = await response.json().catch(() => ({}));
+      forgetIncoming(incoming);
       if (!response.ok) {
         failed.push(label + ": " + (data.error || "Could not save that picture"));
+        render();
         continue;
       }
       saved += (data.saved || []).length;
       waiting += (data.waiting || []).length;
       (data.failed || []).forEach((item) => failed.push((item.name || label) + ": " + item.error));
+      (data.photos || []).forEach((photo) => {
+        if (!state.photos.some((item) => item.id === photo.id)) state.photos.unshift(photo);
+      });
+      render();
     } catch (err) {
+      forgetIncoming(incoming);
+      render();
       failed.push(label + ": the phone lost the connection");
       break;
     }
   }
   addLabel.textContent = "Add photos";
+  state.photos.forEach((photo) => {
+    if (photo.preview) URL.revokeObjectURL(photo.preview);
+  });
   await refresh().catch(() => {});
   if (!failed.length && !waiting) note("Saved " + saved + (saved === 1 ? " picture." : " pictures."), false);
   else {

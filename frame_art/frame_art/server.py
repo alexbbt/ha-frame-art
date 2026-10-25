@@ -295,7 +295,14 @@ def _upload(app: App, album_id: str, content_type: str, body: bytes) -> dict:
             print(f"Frame Art could not save {label}: {message}", flush=True)
             failed.append({"name": label, "error": message})
     waiting = _push(app, staged)
-    return {"saved": saved, "failed": failed, "waiting": waiting}
+    known = {item["id"]: item for item in app.library.status()["photos"]}
+    photos = []
+    for photo in staged:
+        current = dict(known.get(photo["id"]) or photo)
+        path = _stored(app, current["id"])
+        current["file"] = path is not None and path.is_file()
+        photos.append(current)
+    return {"saved": saved, "failed": failed, "waiting": waiting, "photos": photos}
 
 
 def _send(app: App, payload: dict) -> dict:
