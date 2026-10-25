@@ -91,6 +91,12 @@ def handler_for(app: App):
             if path == "/app.js":
                 self._static("app.js", "text/javascript; charset=utf-8")
                 return
+            if path == "/favicon.svg":
+                self._static("favicon.svg", "image/svg+xml")
+                return
+            if path == "/favicon.ico":
+                self._static("favicon.ico", "image/x-icon")
+                return
             if path == "/api/status":
                 self._json(200, app.view())
                 return
