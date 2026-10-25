@@ -2,44 +2,107 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f3f1ec" />
   <title>Frame Art</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <main>
+  <div class="wrap">
     <header>
-      <p class="kicker">Samsung Frame</p>
-      <h1>Albums</h1>
-      <p class="sub">The TV keeps every photo in one pile. It can rotate all of them, or only Favorites. Folders live here. Play a folder to make that the set on the TV.</p>
+      <div>
+        <p class="eyebrow">Frame Art</p>
+        <h1 id="title">Photos</h1>
+        <p id="status" class="status"></p>
+      </div>
+      <div class="folder">
+        <select id="folder" aria-label="Folder"></select>
+        <button id="new-folder" type="button" class="icon" aria-label="New folder">+</button>
+      </div>
     </header>
 
-    <div id="albums" class="albums"></div>
-    <form id="new-album" class="new-album">
-      <input id="album-name" type="text" maxlength="40" placeholder="New folder" />
-      <button type="submit">Add</button>
-    </form>
-
-    <div class="actions">
-      <button id="play" type="button">Play this folder</button>
-      <button id="play-all" type="button" class="secondary">Play every photo</button>
-      <button id="rename" type="button" class="secondary">Rename</button>
-      <button id="delete-folder" type="button" class="secondary">Delete folder</button>
-      <button id="sync" type="button" class="secondary">Refresh from the TV</button>
-    </div>
+    <label id="drop" class="add">
+      <input id="files" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple />
+      <span id="add-label">Add photos</span>
+    </label>
     <p id="message" class="message" hidden></p>
 
-    <form id="drop" class="drop">
-      <input id="files" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple />
-      <p class="drop-title">Add pictures</p>
-      <p class="drop-hint">JPEG, PNG, WebP, or an iPhone photo</p>
-    </form>
+    <section id="grid" class="grid" aria-label="Photos"></section>
 
-    <section>
-      <h2 id="folder-title">Pictures</h2>
-      <ul id="photos" class="list"></ul>
+    <section class="settings">
+      <h2>On the TV</h2>
+      <form id="controls">
+        <label>
+          <span>Each picture</span>
+          <select id="minutes"></select>
+        </label>
+        <label>
+          <span>Order</span>
+          <select id="order">
+            <option value="shuffle">Shuffle</option>
+            <option value="order">In order</option>
+          </select>
+        </label>
+        <label>
+          <span>Rotate</span>
+          <select id="rotate">
+            <option value="">Off</option>
+            <option value="folder">This folder</option>
+            <option value="all">Every photo</option>
+          </select>
+        </label>
+        <label id="row-brightness">
+          <span>Brightness</span>
+          <input id="brightness" type="range" min="0" max="10" step="1" />
+        </label>
+        <label id="row-color">
+          <span>Color</span>
+          <input id="color" type="range" min="0" max="50" step="1" />
+        </label>
+        <label id="row-motion">
+          <span>Motion</span>
+          <select id="motion">
+            <option value="1">Low</option>
+            <option value="2">Medium</option>
+            <option value="3">High</option>
+          </select>
+        </label>
+        <label id="row-sensor">
+          <span>Light sensor</span>
+          <select id="sensor">
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label id="row-sleep">
+          <span>Art stays on</span>
+          <select id="sleep">
+            <option value="off">Until turned off</option>
+            <option value="5">5 minutes</option>
+            <option value="15">15 minutes</option>
+            <option value="30">30 minutes</option>
+            <option value="60">1 hour</option>
+            <option value="120">2 hours</option>
+            <option value="240">4 hours</option>
+          </select>
+        </label>
+      </form>
+      <button id="delete-folder" type="button" class="quiet" hidden>Delete this folder</button>
     </section>
-  </main>
+  </div>
+
+  <dialog id="sheet">
+    <form method="dialog">
+      <img id="sheet-image" alt="" />
+      <p id="sheet-name"></p>
+      <label>
+        <span>Move to</span>
+        <select id="sheet-move"></select>
+      </label>
+      <button id="sheet-remove" type="button" class="danger">Remove from the TV</button>
+      <button type="submit" class="quiet">Close</button>
+    </form>
+  </dialog>
   <script src="app.js"></script>
 </body>
 </html>

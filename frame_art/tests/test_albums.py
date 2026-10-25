@@ -11,12 +11,27 @@ from urllib.request import Request, urlopen
 
 from frame_art.library import Library, favorite_plan
 from frame_art.server import App, handler_for
-from frame_art.tv import FrameTV, art_message, d2d_header
+from frame_art.tv import FrameTV, art_items, art_message, d2d_header, slideshow_view
 from frame_art.ws import FrameBuffer, encode_frame
 from http.server import ThreadingHTTPServer
 
 
 JPEG = b"\xff\xd8\xff\x00tiny"
+
+
+class SettingViewTests(unittest.TestCase):
+    def test_reads_slideshow_and_art_items(self) -> None:
+        slide = slideshow_view(
+            {"data": '{"value":"60","type":"shuffleslideshow","category_id":"MY-C0004"}'}
+        )
+        self.assertEqual(slide["minutes"], 60)
+        self.assertTrue(slide["shuffle"])
+        self.assertEqual(slide["category_id"], "MY-C0004")
+        art = art_items(
+            {"data": [{"item": "brightness", "value": "4"}, {"item": "motion_timer", "value": "off"}]}
+        )
+        self.assertEqual(art["brightness"], "4")
+        self.assertEqual(art["motion_timer"], "off")
 
 
 class PlanTests(unittest.TestCase):
@@ -105,6 +120,15 @@ class PageTests(unittest.TestCase):
                 saved = _raw(port, f"/upload?album={album_id}", body, content_type)
                 self.assertEqual(saved["saved"], ["room.jpg"])
                 self.assertEqual(fake.uploaded, [JPEG])
+                previews = _get(port, f"/api/previews?album={album_id}")
+                self.assertEqual(previews["ready"], ["MY_F0002"])
+                with urlopen(f"http://127.0.0.1:{port}/thumb/MY_F0002") as response:
+                    self.assertEqual(response.read(), JPEG)
+                settings = _get(port, "/api/settings")
+                self.assertEqual(settings["slideshow"]["minutes"], 15)
+                _post(port, "/api/settings", {"minutes": 30, "shuffle": False, "item": "brightness", "value": "6"})
+                self.assertEqual(fake.slide, ("MY-C0002", 30, False))
+                self.assertEqual(fake.art, ("brightness", "6"))
                 status = _get(port, "/api/status")
                 photo_id = status["photos"][0]["id"]
                 _post(port, "/api/play", {"album_id": album_id})
@@ -112,6 +136,8 @@ class PageTests(unittest.TestCase):
                 _post(port, "/api/remove", {"id": photo_id})
                 self.assertEqual(fake.deleted, ["MY_F0002"])
                 self.assertEqual(_get(port, "/api/status")["photos"], [])
+                previews = _get(port, f"/api/previews?album={album_id}")
+                self.assertEqual(previews["ready"], [])
             finally:
                 httpd.shutdown()
                 httpd.server_close()
@@ -150,6 +176,8 @@ class FakeTV:
         self.uploaded: list[bytes] = []
         self.deleted: list[str] = []
         self.played = None
+        self.slide = None
+        self.art = None
 
     def upload(self, jpeg: bytes, matte: str = "none") -> str:
         self.uploaded.append(jpeg)
@@ -161,15 +189,30 @@ class FakeTV:
     def set_favorite(self, content_id: str, on: bool) -> None:
         return None
 
-    def play_folder(self, content_ids: list[str], minutes: int) -> bool:
+    def play_folder(self, content_ids: list[str], minutes: int, *, shuffle: bool = True) -> bool:
         self.played = ("folder", content_ids, minutes)
         return True
 
-    def play_all(self, minutes: int) -> None:
+    def play_all(self, minutes: int, *, shuffle: bool = True) -> None:
         self.played = ("all", minutes)
 
     def my_photos(self) -> list[tuple[str, str]]:
         return []
+
+    def thumbnails(self, content_ids: list[str]) -> dict[str, bytes]:
+        return {content_id: JPEG for content_id in content_ids}
+
+    def read_controls(self) -> dict:
+        return {
+            "slideshow": {"minutes": 15, "shuffle": False, "category_id": "MY-C0002"},
+            "art": {"brightness": "4", "motion_timer": "off"},
+        }
+
+    def apply_slideshow(self, category_id: str, minutes: int, shuffle: bool) -> None:
+        self.slide = (category_id, minutes, shuffle)
+
+    def apply_art(self, item: str, value: str) -> None:
+        self.art = (item, value)
 
     def close(self) -> None:
         return None

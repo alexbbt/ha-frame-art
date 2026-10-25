@@ -24,6 +24,7 @@ class App:
         self.library = library
         self.connect = connect
         self.lock = threading.Lock()
+        self.thumbs: dict[str, bytes] = {}
 
     def view(self) -> dict:
         self.library.ensure_album()
@@ -93,6 +94,24 @@ def handler_for(app: App):
             if path == "/api/status":
                 self._json(200, app.view())
                 return
+            if path == "/api/settings":
+                self._call(_read_settings, app)
+                return
+            if path == "/api/previews":
+                album_id = parse_qs(urlparse(self.path).query).get("album", [""])[0]
+                self._call(_previews, app, album_id)
+                return
+            if path.startswith("/thumb/"):
+                content_id = unquote(path.removeprefix("/thumb/"))
+                try:
+                    data = _thumb(app, content_id)
+                except (ValueError, TVError, OSError) as err:
+                    print(f"Frame Art preview failed for {content_id}: {err}", flush=True)
+                    self._json(404, {"error": "No preview"})
+                    return
+                kind = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
+                self._bytes(200, data, kind)
+                return
             self._json(404, {"error": "Not found"})
 
         def do_POST(self) -> None:  # noqa: N802
@@ -145,7 +164,87 @@ def handler_for(app: App):
             self.end_headers()
             self.wfile.write(data)
 
+        def _call(self, func, *args) -> None:
+            try:
+                self._json(200, func(*args))
+            except (ValueError, TVError, OSError) as err:
+                message = str(err).strip() if isinstance(err, (ValueError, TVError)) else "Could not reach the TV"
+                self._json(400, {"error": message or "Could not reach the TV"})
+
+        def _bytes(self, status: int, payload: bytes, content_type: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.end_headers()
+            self.wfile.write(payload)
+
     return Handler
+
+
+def _read_settings(app: App) -> dict:
+    with app.lock:
+        with app.connect() as tv:
+            return tv.read_controls()
+
+
+def _apply_settings(app: App, payload: dict) -> dict:
+    with app.lock:
+        with app.connect() as tv:
+            current = tv.read_controls()
+            slide = current["slideshow"]
+            if "minutes" in payload or "shuffle" in payload:
+                minutes = int(payload.get("minutes", slide["minutes"]))
+                shuffle = payload.get("shuffle", slide["shuffle"])
+                if isinstance(shuffle, str):
+                    shuffle = shuffle.lower() == "true"
+                category = str(payload.get("category_id") or slide["category_id"])
+                tv.apply_slideshow(category, minutes, bool(shuffle))
+            item = str(payload.get("item") or "")
+            if item:
+                tv.apply_art(item, str(payload.get("value", "")))
+            return tv.read_controls()
+
+
+def _image(data: bytes) -> bool:
+    return data.startswith(b"\xff\xd8\xff") or data.startswith(b"\x89PNG")
+
+
+def _previews(app: App, album_id: str) -> dict:
+    album_id = album_id or app.library.ensure_album()
+    ids = [
+        content_id
+        for content_id in app.library.album_content_ids(album_id)
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", content_id or "")
+    ]
+    missing = [content_id for content_id in ids if content_id not in app.thumbs]
+    if missing:
+        with app.lock:
+            with app.connect() as tv:
+                try:
+                    found = tv.thumbnails(missing)
+                    if not found:
+                        raise TVError("No preview")
+                except TVError:
+                    found = {}
+                    for content_id in missing:
+                        try:
+                            found[content_id] = tv.thumbnail(content_id)
+                        except TVError:
+                            continue
+        for content_id, data in found.items():
+            if content_id in missing and _image(data):
+                app.thumbs[content_id] = data
+    return {"ready": [content_id for content_id in ids if content_id in app.thumbs]}
+
+
+def _thumb(app: App, content_id: str) -> bytes:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", content_id or ""):
+        raise ValueError("That picture is gone")
+    cached = app.thumbs.get(content_id)
+    if not cached:
+        raise TVError("No preview")
+    return cached
 
 
 def _upload(app: App, album_id: str, content_type: str, body: bytes) -> dict:
@@ -198,37 +297,56 @@ def _action(app: App, path: str, payload: dict) -> dict:
                 raise ValueError("That picture is gone")
             with app.connect() as tv:
                 tv.delete([photo["content_id"]])
+            app.thumbs.pop(photo["content_id"], None)
             app.library.remove_photo(photo_id)
         return {"ok": True}
     if path == "/api/play":
-        return _play(app, str(payload.get("album_id", "")))
+        if payload.get("stop"):
+            return _stop(app)
+        minutes = payload.get("minutes")
+        shuffle = payload.get("shuffle", True)
+        if isinstance(shuffle, str):
+            shuffle = shuffle.lower() == "true"
+        return _play(
+            app,
+            str(payload.get("album_id", "")),
+            None if minutes is None else int(minutes),
+            bool(shuffle),
+        )
     if path == "/api/sync":
         album_id = str(payload.get("album_id", "")) or app.library.ensure_album()
         with app.lock:
             with app.connect() as tv:
                 app.library.sync_tv(album_id, tv.my_photos())
         return {"ok": True}
+    if path == "/api/settings":
+        return _apply_settings(app, payload)
     raise ValueError("Not found")
 
 
-def _play(app: App, album_id: str) -> dict:
-    minutes = _minutes()
+def _stop(app: App) -> dict:
+    with app.lock:
+        with app.connect() as tv:
+            current = tv.read_controls()["slideshow"]
+            tv.apply_slideshow(current["category_id"], 0, bool(current["shuffle"]))
+        app.library.mark_playing(None, None)
+    return {"playing": None}
+
+
+def _play(app: App, album_id: str, minutes: int | None = None, shuffle: bool = True) -> dict:
+    chosen = _minutes() if minutes is None else max(0, min(1440, minutes))
     with app.lock:
         with app.connect() as tv:
             if not album_id:
-                tv.play_all(minutes)
+                tv.play_all(chosen, shuffle=shuffle)
                 app.library.mark_playing("all", None)
                 return {"playing": "all", "showing": False}
             content_ids = app.library.album_content_ids(album_id)
-            showing = tv.play_folder(content_ids, minutes)
+            showing = tv.play_folder(content_ids, chosen, shuffle=shuffle)
             app.library.mark_playing("album", album_id)
     if showing:
         return {"playing": "album", "showing": True}
-    return {
-        "playing": "album",
-        "showing": False,
-        "message": "That folder is set. It shows when the TV is in Art Mode.",
-    }
+    return {"playing": "album", "showing": False, "note": "Saved the set. The TV will show it when Art Mode is on."}
 
 
 def _host() -> str:
