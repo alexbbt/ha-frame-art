@@ -451,6 +451,44 @@ async function take(fileList) {
 
 input.addEventListener("change", () => take(input.files));
 
+const themeButtons = Array.from(document.querySelectorAll(".appearance button"));
+const themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function savedTheme() {
+  try {
+    const value = localStorage.getItem("frame-art-theme");
+    if (value === "light" || value === "dark" || value === "auto") return value;
+  } catch (err) {
+    // Private browsing can block storage.
+  }
+  return "auto";
+}
+
+function applyTheme(theme) {
+  const choice = theme === "light" || theme === "dark" ? theme : "auto";
+  if (choice === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = choice;
+  const dark = choice === "dark" || (choice === "auto" && themeQuery.matches);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", dark ? "#111111" : "#ffffff");
+  themeButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.theme === choice));
+  });
+  try {
+    localStorage.setItem("frame-art-theme", choice);
+  } catch (err) {
+    // The choice still applies for this visit.
+  }
+}
+
+themeButtons.forEach((button) => {
+  button.addEventListener("click", () => applyTheme(button.dataset.theme));
+});
+themeQuery.addEventListener("change", () => {
+  if (savedTheme() === "auto") applyTheme("auto");
+});
+applyTheme(savedTheme());
+
 fillStay(60);
 refresh()
   .then(() => loadControls())
