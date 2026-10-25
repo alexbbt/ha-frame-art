@@ -1,0 +1,120 @@
+:root {
+  color-scheme: light;
+  --paper: #f4f0e8;
+  --ink: #1c1915;
+  --muted: #6d655c;
+  --line: #ddd4c6;
+  --accent: #1f4d3a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 17px/1.45 "Iowan Old Style", Palatino, Georgia, serif;
+}
+
+main {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+.kicker {
+  margin: 0;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font: 600 0.72rem/1.2 ui-sans-serif, system-ui, sans-serif;
+  color: var(--muted);
+}
+
+h1 {
+  margin: 0.35rem 0 0.4rem;
+  font-size: 2.4rem;
+  font-weight: 500;
+}
+
+h2 {
+  margin: 2rem 0 0.6rem;
+  font: 600 0.78rem/1.2 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sub { margin: 0; color: var(--muted); }
+
+.drop {
+  margin-top: 1.75rem;
+  border: 1.5px dashed var(--line);
+  border-radius: 1.25rem;
+  min-height: 9rem;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 1.5rem;
+  background: #fffdf8;
+  cursor: pointer;
+}
+
+.drop.over { border-color: var(--accent); background: #f3f7f4; }
+
+.drop input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.drop-title {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.drop-hint {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font: 0.95rem/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+
+.message {
+  margin: 1rem 0 0;
+  font: 0.95rem/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+
+.message.error { color: #8a2e24; }
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.list .name { overflow-wrap: anywhere; }
+
+.list button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 0.9rem/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+  padding: 0.4rem;
+}
+
+.quiet { color: var(--muted); }
+
+.empty {
+  color: var(--muted);
+  font: 0.95rem/1.4 ui-sans-serif, system-ui, sans-serif;
+}

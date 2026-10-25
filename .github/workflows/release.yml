@@ -1,0 +1,311 @@
+---
+name: Release
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    name: Bump version and publish release
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip checks
+        id: skip
+        run: |
+          set -euo pipefail
+          MSG=$(git log -1 --pretty=%B)
+          {
+            echo "commit_msg<<EOF"
+            echo "$MSG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          if echo "$MSG" | grep -Eqi '\[skip release\]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine bump type
+        if: steps.skip.outputs.skip != 'true'
+        id: bump
+        run: |
+          set -euo pipefail
+          MSG="${{ steps.skip.outputs.commit_msg }}"
+          if echo "$MSG" | grep -Eqi '\[major\]|BREAKING CHANGE'; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif echo "$MSG" | grep -Eqi '\[minor\]|^feat(\(|:)|^feature:'; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version and write changelog
+        if: steps.skip.outputs.skip != 'true'
+        id: version
+        run: |
+          set -euo pipefail
+          CONFIG=frame_art/config.yaml
+          CURRENT=$(grep -E '^version:' "$CONFIG" | sed -E 's/version:[[:space:]]*"?([^"]+)"?/\1/')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "${{ steps.bump.outputs.type }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEW="${MAJOR}.${MINOR}.${PATCH}"
+          echo "current=${CURRENT}" >> "$GITHUB_OUTPUT"
+          echo "new=${NEW}" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse "v${NEW}" >/dev/null 2>&1; then
+            echo "Tag v${NEW} already exists; skipping"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+
+          sed -i -E "s/^version: .*/version: \"${NEW}\"/" "$CONFIG"
+          # image: is added here, not in the source commit, so a version is never
+          # published that tells Supervisor to pull an image that does not exist yet.
+          # The commit below happens only after that image is public on GHCR.
+          if ! grep -q '^image:' "$CONFIG"; then
+            sed -i '/^url:/a image: ghcr.io/alexbbt/frame_art' "$CONFIG"
+          fi
+          # Image labels take BUILD_VERSION at docker build time, below.
+          # Static UI ?v=__ASSET_VERSION__ is filled at serve time (version + asset hash)
+
+          # Commits since previous release tag (fallback: last 20 on main)
+          PREV_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)
+          if [ -n "${PREV_TAG}" ]; then
+            RANGE="${PREV_TAG}..HEAD"
+          else
+            RANGE="HEAD~20..HEAD"
+          fi
+
+          # Collect user-facing commits; drop bot release bumps
+          mapfile -t COMMITS < <(
+            git log "${RANGE}" --pretty=format:'%h%x09%s' --no-merges \
+              | grep -Eiv $'^[0-9a-f]+\tchore: release v' \
+              | grep -Eiv $'\\[skip release\\]' \
+              || true
+          )
+
+          FEATURES=()
+          FIXES=()
+          DOCS=()
+          OTHER=()
+
+          clean_subject() {
+            local s="$1"
+            s=$(echo "$s" | sed -E 's/[[:space:]]*\[(major|minor|skip release)\][[:space:]]*//Ig')
+            s=$(echo "$s" | sed -E 's/^(feat|fix|docs|chore|refactor|perf|test|build|ci)(\([^)]*\))?!?:[[:space:]]*//I')
+            echo "$s" | sed -E 's/[[:space:]]+$//'
+          }
+
+          for line in "${COMMITS[@]+"${COMMITS[@]}"}"; do
+            [ -z "${line}" ] && continue
+            SHA="${line%%	*}"
+            SUBJECT="${line#*	}"
+            CLEAN=$(clean_subject "${SUBJECT}")
+            [ -z "${CLEAN}" ] && continue
+            BULLET="- ${CLEAN} (\`${SHA}\`)"
+            if echo "${SUBJECT}" | grep -Eqi '^(feat|feature)(\(|:)|\[minor\]'; then
+              FEATURES+=("${BULLET}")
+            elif echo "${SUBJECT}" | grep -Eqi '^(fix)(\(|:)|bugfix|hotfix'; then
+              FIXES+=("${BULLET}")
+            elif echo "${SUBJECT}" | grep -Eqi '^(docs?)(\(|:)|readme|documentation'; then
+              DOCS+=("${BULLET}")
+            else
+              OTHER+=("${BULLET}")
+            fi
+          done
+
+          if [ ${#FEATURES[@]} -eq 0 ] && [ ${#FIXES[@]} -eq 0 ] && [ ${#DOCS[@]} -eq 0 ] && [ ${#OTHER[@]} -eq 0 ]; then
+            SHA=$(git rev-parse --short HEAD)
+            SUBJECT=$(clean_subject "$(git log -1 --pretty=%s)")
+            OTHER+=("- ${SUBJECT} (\`${SHA}\`)")
+          fi
+
+          {
+            echo "## ${NEW}"
+            echo
+            if [ ${#FEATURES[@]} -gt 0 ]; then
+              echo "### Features"
+              echo
+              printf '%s\n' "${FEATURES[@]}"
+              echo
+            fi
+            if [ ${#FIXES[@]} -gt 0 ]; then
+              echo "### Fixes"
+              echo
+              printf '%s\n' "${FIXES[@]}"
+              echo
+            fi
+            if [ ${#DOCS[@]} -gt 0 ]; then
+              echo "### Documentation"
+              echo
+              printf '%s\n' "${DOCS[@]}"
+              echo
+            fi
+            if [ ${#OTHER[@]} -gt 0 ]; then
+              echo "### Changes"
+              echo
+              printf '%s\n' "${OTHER[@]}"
+              echo
+            fi
+          } > /tmp/changelog-section.md
+
+          # Supervisor only serves CHANGELOG.md from inside the app folder
+          CHANGELOG=frame_art/CHANGELOG.md
+          if ! grep -qE "^## ${NEW}$" "$CHANGELOG"; then
+            BODY=$(awk '/^# Changelog/{next} {print}' "$CHANGELOG")
+            {
+              echo "# Changelog"
+              echo
+              cat /tmp/changelog-section.md
+              printf '%s\n' "${BODY}"
+            } > "${CHANGELOG}.tmp"
+            mv "${CHANGELOG}.tmp" "$CHANGELOG"
+          fi
+
+          cp /tmp/changelog-section.md /tmp/release-notes.md
+          # Soften heading for GitHub release body (title already has version)
+          sed -i -E "1s/^## ${NEW}$/## What's changed/" /tmp/release-notes.md
+
+      - name: Image build date
+        if: steps.skip.outputs.skip != 'true' && steps.version.outputs.exists != 'true'
+        id: meta
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: steps.skip.outputs.skip != 'true' && steps.version.outputs.exists != 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        if: steps.skip.outputs.skip != 'true' && steps.version.outputs.exists != 'true'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        if: steps.skip.outputs.skip != 'true' && steps.version.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Publish image
+        if: steps.skip.outputs.skip != 'true' && steps.version.outputs.exists != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: frame_art
+          file: frame_art/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ghcr.io/alexbbt/frame_art:${{ steps.version.outputs.new }}
+            ghcr.io/alexbbt/frame_art:stable
+          build-args: |
+            BUILD_ARCH=aarch64|amd64
+            BUILD_DATE=${{ steps.meta.outputs.date }}
+            BUILD_DESCRIPTION=Upload pictures for a Samsung Frame TV
+            BUILD_NAME=Frame Art
+            BUILD_REF=${{ github.sha }}
+            BUILD_REPOSITORY=${{ github.repository }}
+            BUILD_VERSION=${{ steps.version.outputs.new }}
+
+      - name: Make the GHCR package public
+        if: steps.skip.outputs.skip != 'true' && steps.version.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          PKG="frame_art"
+          PATH_API="/users/${OWNER}/packages/container/${PKG}"
+
+          read_visibility() {
+            gh api "${PATH_API}" --jq .visibility 2>/dev/null || true
+          }
+
+          # A package created by GITHUB_TOKEN inherits the repository visibility.
+          # Poll until the registry has registered it, then require public.
+          vis=""
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            vis="$(read_visibility)"
+            if [ -n "${vis}" ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [ "${vis}" != "public" ]; then
+            gh api --method PATCH \
+              -H "Accept: application/vnd.github+json" \
+              "${PATH_API}" \
+              -f visibility=public || true
+            vis="$(read_visibility)"
+          fi
+
+          echo "visibility=${vis:-unknown}"
+          if [ "${vis}" != "public" ]; then
+            echo "ghcr.io/${OWNER}/${PKG} is not public."
+            echo "Set it to Public under package settings, then re-run this workflow."
+            echo "https://github.com/users/${OWNER}/packages/container/${PKG}/settings"
+            echo "Refusing to publish a version that would pull a private image."
+            exit 1
+          fi
+
+      - name: Commit, tag, and release
+        if: steps.skip.outputs.skip != 'true' && steps.version.outputs.exists != 'true'
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frame_art/config.yaml frame_art/CHANGELOG.md
+          git commit -m "chore: release v${NEW} [skip release]"
+          git push origin main
+          git tag "v${NEW}"
+          git push origin "v${NEW}"
+
+          if [ -f /tmp/release-notes.md ]; then
+            NOTES=$(cat /tmp/release-notes.md)
+          else
+            NOTES=$(awk -v ver="## ${NEW}" '
+              $0 == ver {capture=1; next}
+              capture && /^## / {exit}
+              capture {print}
+            ' frame_art/CHANGELOG.md)
+          fi
+          if [ -z "${NOTES// }" ]; then
+            NOTES="Release v${NEW}"
+          fi
+          gh release create "v${NEW}" \
+            --title "v${NEW}" \
+            --notes "${NOTES}"

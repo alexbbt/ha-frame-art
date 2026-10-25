@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Frame Art</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <p class="kicker">Samsung Frame</p>
+      <h1>Add a picture</h1>
+      <p class="sub">It shows up on the TV within a minute, in place of the Samsung art store.</p>
+    </header>
+
+    <form id="drop" class="drop">
+      <input id="files" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple />
+      <p class="drop-title">Choose pictures</p>
+      <p class="drop-hint">JPEG, PNG, WebP, or an iPhone photo</p>
+    </form>
+    <p id="message" class="message" hidden></p>
+
+    <section>
+      <h2>Waiting</h2>
+      <ul id="inbox" class="list"></ul>
+    </section>
+    <section>
+      <h2>Sent to the TV</h2>
+      <ul id="uploaded" class="list quiet"></ul>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

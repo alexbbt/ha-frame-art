@@ -1,0 +1,1 @@
+"""Frame Art upload page."""
