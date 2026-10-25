@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+### Fixes
+
+- list the albums on the page and show photos while previews load (`180b527`)
+
+
 ## 0.3.0
 
 ### Features
