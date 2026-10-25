@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.11
+
+### Fixes
+
+- add light, dark, and automatic appearance (`607ded5`)
+
+
 ## 0.3.10
 
 ### Fixes
