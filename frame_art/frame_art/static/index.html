@@ -38,7 +38,14 @@
     </label>
     <p id="message" class="message" hidden></p>
 
-    <section id="grid" class="grid" aria-label="Photos"></section>
+    <div class="stage">
+      <div class="select-bar">
+        <button id="select-toggle" type="button">Select</button>
+        <p id="select-count" hidden></p>
+        <button id="select-delete" type="button" class="danger" hidden>Remove from the TV</button>
+      </div>
+      <section id="grid" class="grid" aria-label="Photos"></section>
+    </div>
 
     <section class="settings">
       <h2>On the TV</h2>

@@ -295,19 +295,7 @@ def _action(app: App, path: str, payload: dict) -> dict:
         photo = app.library.move_photo(str(payload.get("id", "")), str(payload.get("album_id", "")))
         return {"photo": photo}
     if path == "/api/remove":
-        photo_id = str(payload.get("id", ""))
-        with app.lock:
-            photo = next(
-                (item for item in app.library.status()["photos"] if item["id"] == photo_id),
-                None,
-            )
-            if photo is None:
-                raise ValueError("That picture is gone")
-            with app.connect() as tv:
-                tv.delete([photo["content_id"]])
-            app.thumbs.pop(photo["content_id"], None)
-            app.library.remove_photo(photo_id)
-        return {"ok": True}
+        return _remove(app, payload)
     if path == "/api/play":
         if payload.get("stop"):
             return _stop(app)
@@ -330,6 +318,36 @@ def _action(app: App, path: str, payload: dict) -> dict:
     if path == "/api/settings":
         return _apply_settings(app, payload)
     raise ValueError("Not found")
+
+
+def _remove(app: App, payload: dict) -> dict:
+    raw = payload.get("ids")
+    if isinstance(raw, list):
+        photo_ids = []
+        for item in raw:
+            photo_id = str(item or "")
+            if photo_id and photo_id not in photo_ids:
+                photo_ids.append(photo_id)
+    else:
+        photo_ids = [str(payload.get("id") or "")]
+        photo_ids = [photo_id for photo_id in photo_ids if photo_id]
+    if not photo_ids:
+        raise ValueError("Choose a picture first")
+    with app.lock:
+        known = {item["id"]: item for item in app.library.status()["photos"]}
+        photos = []
+        for photo_id in photo_ids:
+            photo = known.get(photo_id)
+            if photo is None:
+                raise ValueError("That picture is gone")
+            photos.append(photo)
+        with app.connect() as tv:
+            tv.delete([photo["content_id"] for photo in photos if photo.get("content_id")])
+        for photo in photos:
+            if photo.get("content_id"):
+                app.thumbs.pop(photo["content_id"], None)
+            app.library.remove_photo(photo["id"])
+    return {"ok": True, "removed": len(photos)}
 
 
 def _stop(app: App) -> dict:

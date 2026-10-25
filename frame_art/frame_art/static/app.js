@@ -100,6 +100,8 @@ function syncWakeLock(shouldHold) {
 window.addEventListener("pagehide", () => syncWakeLock(false));
 let applying = false;
 let openPhoto = null;
+let selecting = false;
+let picked = new Set();
 let ready = new Set();
 let loadingPreviews = false;
 let warmToken = 0;
@@ -167,6 +169,8 @@ function render() {
     button.addEventListener("click", () => {
       if (item.id === selected) return;
       selected = item.id;
+      selecting = false;
+      picked.clear();
       showCurrent();
     });
     albumsEl.appendChild(button);
@@ -174,6 +178,16 @@ function render() {
   document.getElementById("delete-folder").hidden = state.albums.length < 2;
 
   const photos = state.photos.filter((photo) => album && photo.album_id === album.id);
+  const countEl = document.getElementById("select-count");
+  const deleteEl = document.getElementById("select-delete");
+  const toggleEl = document.getElementById("select-toggle");
+  const alive = new Set(photos.map((photo) => photo.id));
+  picked = new Set([...picked].filter((id) => alive.has(id)));
+  toggleEl.textContent = selecting ? "Cancel" : "Select";
+  countEl.hidden = !selecting;
+  deleteEl.hidden = !selecting;
+  countEl.textContent = picked.size === 1 ? "1 selected" : picked.size + " selected";
+  deleteEl.disabled = picked.size === 0;
   gridEl.replaceChildren();
   if (!photos.length) {
     const empty = document.createElement("p");
@@ -194,7 +208,8 @@ function render() {
 function card(photo) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "card";
+  button.className = "card" + (selecting ? " picking" : "") + (picked.has(photo.id) ? " chosen" : "");
+  if (selecting) button.setAttribute("aria-pressed", picked.has(photo.id) ? "true" : "false");
   const thumb = document.createElement("div");
   thumb.className = "thumb";
   if (photo.content_id && ready.has(photo.content_id)) {
@@ -205,7 +220,15 @@ function card(photo) {
   const caption = document.createElement("span");
   caption.textContent = photo.name;
   button.append(thumb, caption);
-  button.addEventListener("click", () => openSheet(photo));
+  button.addEventListener("click", () => {
+    if (!selecting) {
+      openSheet(photo);
+      return;
+    }
+    if (picked.has(photo.id)) picked.delete(photo.id);
+    else picked.add(photo.id);
+    render();
+  });
   return button;
 }
 
@@ -383,6 +406,28 @@ sheetMove.addEventListener("change", async () => {
   try {
     await api("api/move", { id: openPhoto.id, album_id: sheetMove.value });
     sheet.close();
+    await refresh();
+  } catch (err) {
+    note(err.message, true);
+  }
+});
+
+document.getElementById("select-toggle").addEventListener("click", () => {
+  selecting = !selecting;
+  if (!selecting) picked.clear();
+  render();
+});
+
+document.getElementById("select-delete").addEventListener("click", async () => {
+  const ids = [...picked];
+  if (!ids.length) return;
+  const label = ids.length === 1 ? "this picture" : ids.length + " pictures";
+  if (!window.confirm("Remove " + label + " from the TV?")) return;
+  try {
+    await api("api/remove", { ids });
+    selecting = false;
+    picked.clear();
+    note(ids.length === 1 ? "Removed from the TV." : "Removed " + ids.length + " pictures.", false);
     await refresh();
   } catch (err) {
     note(err.message, true);
