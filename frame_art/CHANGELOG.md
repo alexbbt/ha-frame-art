@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6
+
+### Fixes
+
+- keep uploaded previews when a folder also has store art (`c63563e`)
+
+
 ## 0.3.5
 
 ### Fixes
