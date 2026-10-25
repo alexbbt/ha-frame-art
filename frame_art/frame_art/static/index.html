@@ -3,19 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#f3f1ec" />
+  <meta name="theme-color" content="#f6f5f3" />
   <title>Frame Art</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="wrap">
     <header>
-      <div>
-        <p class="eyebrow">Frame Art</p>
-        <h1 id="title">Photos</h1>
-        <p id="status" class="status">Loading</p>
-      </div>
+      <h1 id="title">Photos</h1>
+      <p id="status" class="status">Loading</p>
     </header>
+
     <div class="albums-row">
       <nav id="albums" class="albums" aria-label="Albums"></nav>
       <button id="new-folder" type="button" class="icon" aria-label="New folder">+</button>
@@ -94,13 +92,15 @@
   <dialog id="sheet">
     <form method="dialog">
       <img id="sheet-image" alt="" />
-      <p id="sheet-name"></p>
-      <label>
-        <span>Move to</span>
-        <select id="sheet-move"></select>
-      </label>
-      <button id="sheet-remove" type="button" class="danger">Remove from the TV</button>
-      <button type="submit" class="quiet">Close</button>
+      <div class="sheet-body">
+        <p id="sheet-name"></p>
+        <label>
+          <span>Move to</span>
+          <select id="sheet-move"></select>
+        </label>
+        <button id="sheet-remove" type="button" class="danger">Remove from the TV</button>
+        <button type="submit" class="quiet">Close</button>
+      </div>
     </form>
   </dialog>
   <script src="app.js"></script>
