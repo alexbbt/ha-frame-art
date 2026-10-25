@@ -20,15 +20,19 @@ MAX_BODY = 80 * 1024 * 1024
 
 
 class App:
-    def __init__(self, library: Library, connect) -> None:
+    def __init__(self, library: Library, connect, files: Path | None = None) -> None:
         self.library = library
         self.connect = connect
+        self.files = files if files is not None else library.path.parent / "files"
         self.lock = threading.Lock()
         self.thumbs: dict[str, bytes] = {}
 
     def view(self) -> dict:
         self.library.ensure_album()
         payload = self.library.status()
+        for photo in payload["photos"]:
+            path = _stored(self, photo["id"])
+            photo["file"] = path is not None and path.is_file()
         payload["configured"] = bool(_host())
         return payload
 
@@ -106,6 +110,16 @@ def handler_for(app: App):
             if path == "/api/previews":
                 album_id = parse_qs(urlparse(self.path).query).get("album", [""])[0]
                 self._call(_previews, app, album_id)
+                return
+            if path.startswith("/file/"):
+                photo_id = unquote(path.removeprefix("/file/"))
+                try:
+                    data = _local(app, photo_id)
+                except (ValueError, OSError) as err:
+                    print(f"Frame Art file missing for {photo_id}: {err}", flush=True)
+                    self._json(404, {"error": "No preview"})
+                    return
+                self._bytes(200, data, "image/jpeg")
                 return
             if path.startswith("/thumb/"):
                 content_id = unquote(path.removeprefix("/thumb/"))
@@ -256,29 +270,91 @@ def _thumb(app: App, content_id: str) -> bytes:
 
 
 def _upload(app: App, album_id: str, content_type: str, body: bytes) -> dict:
-    """Save every picture. One failure does not drop the rest."""
+    """Keep every picture on the add-on, then send it to the TV."""
     files = parse_files(content_type, body)
     if not album_id:
         album_id = app.library.ensure_album()
     saved: list[str] = []
     failed: list[dict[str, str]] = []
-    with app.lock:
-        with app.connect() as tv:
-            for filename, data in files:
-                label = Path(filename or "picture").name or "picture"
-                try:
-                    display, jpeg = prepare_image(filename, data)
-                    content_id = tv.upload(jpeg)
-                    photo = app.library.add_photo(album_id, display, content_id)
-                    saved.append(photo["name"])
-                    del jpeg
-                    if app.library.status().get("playing_album_id") == album_id:
-                        tv.set_favorite(content_id, True)
-                except Exception as err:
-                    message = str(err).strip() or "Could not save that picture"
-                    print(f"Frame Art could not save {label}: {message}", flush=True)
-                    failed.append({"name": label, "error": message})
-    return {"saved": saved, "failed": failed}
+    staged: list[dict] = []
+    for filename, data in files:
+        label = Path(filename or "picture").name or "picture"
+        try:
+            display, jpeg = prepare_image(filename, data)
+            photo = app.library.add_photo(album_id, display, "")
+            try:
+                _keep(app, photo["id"], jpeg)
+            except Exception:
+                app.library.remove_photo(photo["id"])
+                raise
+            staged.append(photo)
+            saved.append(photo["name"])
+            del jpeg
+        except Exception as err:
+            message = str(err).strip() or "Could not save that picture"
+            print(f"Frame Art could not save {label}: {message}", flush=True)
+            failed.append({"name": label, "error": message})
+    waiting = _push(app, staged)
+    return {"saved": saved, "failed": failed, "waiting": waiting}
+
+
+def _send(app: App, payload: dict) -> dict:
+    """Send pictures that are already stored here and not yet on the TV."""
+    album_id = str(payload.get("album_id") or "")
+    raw = payload.get("ids")
+    wanted = {str(item) for item in raw} if isinstance(raw, list) else set()
+    photos = []
+    for photo in app.library.status()["photos"]:
+        if photo.get("content_id"):
+            continue
+        if album_id and photo["album_id"] != album_id:
+            continue
+        if wanted and photo["id"] not in wanted:
+            continue
+        if not album_id and not wanted:
+            continue
+        photos.append(photo)
+    waiting = _push(app, photos)
+    sent = [photo["name"] for photo in photos if photo["id"] not in {item["id"] for item in waiting}]
+    return {"sent": sent, "waiting": waiting}
+
+
+def _push(app: App, photos: list[dict]) -> list[dict[str, str]]:
+    """Upload stored pictures. A TV failure leaves the file here for another try."""
+    if not photos:
+        return []
+    waiting: list[dict[str, str]] = []
+    try:
+        with app.lock:
+            with app.connect() as tv:
+                for photo in photos:
+                    path = _stored(app, photo["id"])
+                    if path is None or not path.is_file():
+                        waiting.append({"id": photo["id"], "name": photo["name"], "error": "That picture is no longer stored"})
+                        continue
+                    try:
+                        content_id = tv.upload(path.read_bytes())
+                        app.library.set_content(photo["id"], content_id)
+                        playing = app.library.status()
+                        if playing.get("playing_album_id") == photo["album_id"]:
+                            try:
+                                tv.set_favorite(content_id, True)
+                            except Exception as err:
+                                print(f"Frame Art could not favorite {content_id}: {err}", flush=True)
+                    except Exception as err:
+                        message = str(err).strip() or "The TV did not keep that picture"
+                        print(f"Frame Art could not send {photo['name']}: {message}", flush=True)
+                        waiting.append({"id": photo["id"], "name": photo["name"], "error": message})
+    except Exception as err:
+        message = str(err).strip() or "Could not reach the TV"
+        print(f"Frame Art could not reach the TV: {message}", flush=True)
+        known = {item["id"]: item for item in app.library.status()["photos"]}
+        already = {item["id"] for item in waiting}
+        for photo in photos:
+            if photo["id"] in already or (known.get(photo["id"]) or {}).get("content_id"):
+                continue
+            waiting.append({"id": photo["id"], "name": photo["name"], "error": message})
+    return waiting
 
 
 def _action(app: App, path: str, payload: dict) -> dict:
@@ -296,6 +372,8 @@ def _action(app: App, path: str, payload: dict) -> dict:
         return {"photo": photo}
     if path == "/api/remove":
         return _remove(app, payload)
+    if path == "/api/send":
+        return _send(app, payload)
     if path == "/api/play":
         if payload.get("stop"):
             return _stop(app)
@@ -341,11 +419,14 @@ def _remove(app: App, payload: dict) -> dict:
             if photo is None:
                 raise ValueError("That picture is gone")
             photos.append(photo)
-        with app.connect() as tv:
-            tv.delete([photo["content_id"] for photo in photos if photo.get("content_id")])
+        content_ids = [photo["content_id"] for photo in photos if photo.get("content_id")]
+        if content_ids:
+            with app.connect() as tv:
+                tv.delete(content_ids)
         for photo in photos:
             if photo.get("content_id"):
                 app.thumbs.pop(photo["content_id"], None)
+            _forget(app, photo["id"])
             app.library.remove_photo(photo["id"])
     return {"ok": True, "removed": len(photos)}
 
@@ -413,9 +494,38 @@ def _connect(data_dir: Path):
         tv.close()
 
 
+def _stored(app: App, photo_id: str) -> Path | None:
+    if not re.fullmatch(r"[a-f0-9]{32}", photo_id or ""):
+        return None
+    return app.files / f"{photo_id}.jpg"
+
+
+def _keep(app: App, photo_id: str, jpeg: bytes) -> None:
+    path = _stored(app, photo_id)
+    if path is None:
+        raise ValueError("That picture is gone")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".jpg.tmp")
+    temporary.write_bytes(jpeg)
+    temporary.replace(path)
+
+
+def _local(app: App, photo_id: str) -> bytes:
+    path = _stored(app, photo_id)
+    if path is None or not path.is_file():
+        raise ValueError("No preview")
+    return path.read_bytes()
+
+
+def _forget(app: App, photo_id: str) -> None:
+    path = _stored(app, photo_id)
+    if path is not None and path.is_file():
+        path.unlink()
+
+
 def main() -> None:
     data_dir = Path(os.environ.get("FRAME_ART_DATA", "/data"))
-    app = App(Library(data_dir / "library.json"), lambda: _connect(data_dir))
+    app = App(Library(data_dir / "library.json"), lambda: _connect(data_dir), data_dir / "files")
     port = int(os.environ.get("PORT", "8391"))
     httpd = ThreadingHTTPServer(("0.0.0.0", port), handler_for(app))
     httpd.serve_forever()

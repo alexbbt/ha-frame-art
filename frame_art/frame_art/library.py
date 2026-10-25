@@ -67,7 +67,7 @@ class Library:
                 self._data["playing"] = None
             self._save()
 
-    def add_photo(self, album_id: str, name: str, content_id: str) -> dict:
+    def add_photo(self, album_id: str, name: str, content_id: str = "") -> dict:
         with self._lock:
             self._album(album_id)
             photo = {
@@ -77,6 +77,15 @@ class Library:
                 "content_id": content_id,
             }
             self._data["photos"].insert(0, photo)
+            self._save()
+            return dict(photo)
+
+    def set_content(self, photo_id: str, content_id: str) -> dict:
+        with self._lock:
+            photo = self._photo(photo_id)
+            if not content_id:
+                raise ValueError("The TV did not keep that picture")
+            photo["content_id"] = content_id
             self._save()
             return dict(photo)
 

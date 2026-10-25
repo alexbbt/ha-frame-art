@@ -247,6 +247,43 @@ class PageTests(unittest.TestCase):
                 httpd.server_close()
                 thread.join(timeout=3)
 
+    def test_a_tv_refusal_keeps_the_picture_for_another_try(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeTV()
+            fake.refuse = True
+            app = App(Library(Path(tmp) / "library.json"), lambda: _connect(fake))
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(app))
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            port = httpd.server_address[1]
+            try:
+                import frame_art.server as server
+
+                server.prepare_image = lambda filename, data: ("room.jpg", JPEG)
+                body, content_type = _multipart("room.jpg", JPEG)
+                result = _raw(port, "/upload?album=", body, content_type)
+                self.assertEqual(result["saved"], ["room.jpg"])
+                self.assertEqual(result["waiting"][0]["name"], "room.jpg")
+                self.assertEqual(fake.uploaded, [])
+                status = _get(port, "/api/status")
+                photo = status["photos"][0]
+                self.assertEqual(photo["content_id"], "")
+                self.assertTrue(photo["file"])
+                with urlopen(f"http://127.0.0.1:{port}/file/{photo['id']}") as response:
+                    self.assertEqual(response.read(), JPEG)
+                fake.refuse = False
+                sent = _post(port, "/api/send", {"album_id": photo["album_id"]})
+                self.assertEqual(sent["sent"], ["room.jpg"])
+                self.assertEqual(sent["waiting"], [])
+                self.assertEqual(fake.uploaded, [JPEG])
+                again = _get(port, "/api/status")["photos"][0]
+                self.assertEqual(again["content_id"], "MY_F0002")
+                self.assertTrue(again["file"])
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
 
 class FakeTV:
     def __init__(self) -> None:
@@ -255,8 +292,11 @@ class FakeTV:
         self.played = None
         self.slide = None
         self.art = None
+        self.refuse = False
 
     def upload(self, jpeg: bytes, matte: str = "none") -> str:
+        if self.refuse:
+            raise RuntimeError("The TV did not keep that picture")
         self.uploaded.append(jpeg)
         return "MY_F0002"
 

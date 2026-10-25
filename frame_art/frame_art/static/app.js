@@ -146,9 +146,14 @@ function fillStay(current) {
   if (current) minutesEl.value = String(current);
 }
 
+function needsThumb(photo) {
+  if (!photo.content_id || photo.file || String(photo.content_id).startsWith("SAM-S")) return false;
+  return !ready.has(photo.content_id);
+}
+
 function needsPreviews(album) {
   if (!album) return false;
-  return state.photos.some((photo) => photo.album_id === album.id && photo.content_id && !ready.has(photo.content_id));
+  return state.photos.some((photo) => photo.album_id === album.id && needsThumb(photo));
 }
 
 function render() {
@@ -188,6 +193,7 @@ function render() {
   deleteEl.hidden = !selecting;
   countEl.textContent = picked.size === 1 ? "1 selected" : picked.size + " selected";
   deleteEl.disabled = picked.size === 0;
+  document.getElementById("send-tv").hidden = !photos.some((photo) => photo.file && !photo.content_id);
   gridEl.replaceChildren();
   if (!photos.length) {
     const empty = document.createElement("p");
@@ -212,14 +218,23 @@ function card(photo) {
   if (selecting) button.setAttribute("aria-pressed", picked.has(photo.id) ? "true" : "false");
   const thumb = document.createElement("div");
   thumb.className = "thumb";
-  if (photo.content_id && ready.has(photo.content_id)) {
+  const store = photo.content_id && String(photo.content_id).startsWith("SAM-S");
+  if (photo.file) {
+    thumb.style.backgroundImage = "url('file/" + encodeURIComponent(photo.id) + "')";
+  } else if (photo.content_id && ready.has(photo.content_id)) {
     thumb.style.backgroundImage = "url('thumb/" + encodeURIComponent(photo.content_id) + "')";
-  } else if (loadingPreviews && photo.content_id) {
+  } else if (loadingPreviews && needsThumb(photo)) {
     thumb.classList.add("waiting");
   }
   const caption = document.createElement("span");
   caption.textContent = photo.name;
   button.append(thumb, caption);
+  if (store || (photo.file && !photo.content_id)) {
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = store ? "Art Store" : "Not on the TV";
+    button.append(hint);
+  }
   button.addEventListener("click", () => {
     if (!selecting) {
       openSheet(photo);
@@ -235,7 +250,9 @@ function card(photo) {
 function openSheet(photo) {
   openPhoto = photo;
   sheetName.textContent = photo.name;
-  sheetImage.src = photo.content_id ? "thumb/" + encodeURIComponent(photo.content_id) : "";
+  if (photo.file) sheetImage.src = "file/" + encodeURIComponent(photo.id);
+  else sheetImage.src = photo.content_id ? "thumb/" + encodeURIComponent(photo.content_id) : "";
+  document.getElementById("sheet-remove").textContent = photo.content_id ? "Remove from the TV" : "Remove";
   sheetMove.replaceChildren();
   state.albums.forEach((album) => {
     const option = document.createElement("option");
@@ -412,6 +429,25 @@ sheetMove.addEventListener("change", async () => {
   }
 });
 
+document.getElementById("send-tv").addEventListener("click", async () => {
+  const album = currentAlbum();
+  const button = document.getElementById("send-tv");
+  if (!album || button.disabled) return;
+  button.disabled = true;
+  try {
+    const data = await api("api/send", { album_id: album.id });
+    const sent = (data.sent || []).length;
+    const waiting = (data.waiting || []).length;
+    if (!waiting) note(sent === 1 ? "Sent to the TV." : "Sent " + sent + " pictures.", false);
+    else note((sent ? "Sent " + sent + ". " : "") + ((data.waiting[0] && data.waiting[0].error) || "The TV did not take them."), true);
+    await refresh();
+  } catch (err) {
+    note(err.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 document.getElementById("select-toggle").addEventListener("click", () => {
   selecting = !selecting;
   if (!selecting) picked.clear();
@@ -452,6 +488,7 @@ async function send(files) {
   if (!album || !list.length) return;
   const failed = [];
   let saved = 0;
+  let waiting = 0;
   for (let index = 0; index < list.length; index += 1) {
     const file = list[index];
     const label = file.name || "picture";
@@ -466,6 +503,7 @@ async function send(files) {
         continue;
       }
       saved += (data.saved || []).length;
+      waiting += (data.waiting || []).length;
       (data.failed || []).forEach((item) => failed.push((item.name || label) + ": " + item.error));
     } catch (err) {
       failed.push(label + ": the phone lost the connection");
@@ -474,8 +512,11 @@ async function send(files) {
   }
   addLabel.textContent = "Add photos";
   await refresh().catch(() => {});
-  if (!failed.length) note("Saved " + saved + (saved === 1 ? " picture." : " pictures."), false);
-  else note((saved ? "Saved " + saved + ". " : "") + failed.slice(0, 2).join(" "), true);
+  if (!failed.length && !waiting) note("Saved " + saved + (saved === 1 ? " picture." : " pictures."), false);
+  else {
+    const held = waiting ? waiting + (waiting === 1 ? " still needs the TV. " : " still need the TV. ") : "";
+    note((saved ? "Saved " + saved + ". " : "") + held + failed.slice(0, 2).join(" "), true);
+  }
 }
 
 async function take(fileList) {
