@@ -315,6 +315,33 @@ class PageTests(unittest.TestCase):
                 httpd.server_close()
                 thread.join(timeout=3)
 
+    def test_a_new_photo_joins_the_folder_already_on_the_tv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeTV()
+            library = Library(Path(tmp) / "library.json")
+            app = App(library, lambda: _connect(fake))
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(app))
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            port = httpd.server_address[1]
+            try:
+                import frame_art.server as server
+
+                server.prepare_image = lambda filename, data, **_kwargs: ("room.jpg", JPEG)
+                album_id = _get(port, "/api/status")["albums"][0]["id"]
+                library.mark_playing("album", album_id)
+                body, content_type = _multipart("room.jpg", JPEG)
+                _raw(port, f"/upload?album={album_id}", body, content_type)
+                self.assertEqual(fake.slide[0], "MY-C0004")
+                self.assertEqual(fake.slide[3], ["MY_F0002"])
+                photo_id = _get(port, "/api/status")["photos"][0]["id"]
+                _post(port, "/api/remove", {"id": photo_id})
+                self.assertEqual(fake.slide[3], [])
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
 
 class FakeTV:
     def __init__(self) -> None:
@@ -367,6 +394,9 @@ class FakeTV:
 
     def apply_art(self, item: str, value: str) -> None:
         self.art = (item, value)
+
+    def slideshow(self, category_id: str, minutes: int, *, shuffle: bool = True, content_ids=None) -> None:
+        self.slide = (category_id, minutes, shuffle, content_ids)
 
     def close(self) -> None:
         return None

@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .images import prepare_image
-from .library import Library
+from .library import FAVORITES, Library
 from .tv import TVError, open_tv
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -332,6 +332,7 @@ def _push(app: App, photos: list[dict]) -> list[dict[str, str]]:
     if not photos:
         return []
     waiting: list[dict[str, str]] = []
+    refresh_album = ""
     try:
         with app.lock:
             with app.connect() as tv:
@@ -344,7 +345,8 @@ def _push(app: App, photos: list[dict]) -> list[dict[str, str]]:
                         content_id = tv.upload(path.read_bytes())
                         app.library.set_content(photo["id"], content_id)
                         playing = app.library.status()
-                        if playing.get("playing_album_id") == photo["album_id"]:
+                        if playing.get("playing") == "album" and playing.get("playing_album_id") == photo["album_id"]:
+                            refresh_album = photo["album_id"]
                             try:
                                 tv.set_favorite(content_id, True)
                             except Exception as err:
@@ -353,6 +355,11 @@ def _push(app: App, photos: list[dict]) -> list[dict[str, str]]:
                         message = str(err).strip() or "The TV did not keep that picture"
                         print(f"Frame Art could not send {photo['name']}: {message}", flush=True)
                         waiting.append({"id": photo["id"], "name": photo["name"], "error": message})
+                if refresh_album:
+                    try:
+                        _refresh_playing(app, tv, refresh_album)
+                    except Exception as err:
+                        print(f"Frame Art could not update the rotating folder: {err}", flush=True)
     except Exception as err:
         message = str(err).strip() or "Could not reach the TV"
         print(f"Frame Art could not reach the TV: {message}", flush=True)
@@ -430,15 +437,47 @@ def _remove(app: App, payload: dict) -> dict:
                 raise ValueError("That picture is gone")
             photos.append(photo)
         content_ids = [photo["content_id"] for photo in photos if photo.get("content_id")]
-        if content_ids:
+        playing = app.library.status()
+        playing_id = str(playing.get("playing_album_id") or "")
+        affected = playing.get("playing") == "album" and any(
+            photo.get("content_id") and photo.get("album_id") == playing_id for photo in photos
+        )
+        if content_ids or affected:
             with app.connect() as tv:
-                tv.delete(content_ids)
-        for photo in photos:
-            if photo.get("content_id"):
-                app.thumbs.pop(photo["content_id"], None)
-            _forget(app, photo["id"])
-            app.library.remove_photo(photo["id"])
+                if content_ids:
+                    tv.delete(content_ids)
+                for photo in photos:
+                    if photo.get("content_id"):
+                        app.thumbs.pop(photo["content_id"], None)
+                    _forget(app, photo["id"])
+                    app.library.remove_photo(photo["id"])
+                if affected:
+                    try:
+                        _refresh_playing(app, tv, playing_id)
+                    except Exception as err:
+                        print(f"Frame Art could not update the rotating folder: {err}", flush=True)
+        else:
+            for photo in photos:
+                _forget(app, photo["id"])
+                app.library.remove_photo(photo["id"])
     return {"ok": True, "removed": len(photos)}
+
+
+def _refresh_playing(app: App, tv, album_id: str) -> None:
+    """Keep the TV rotation equal to the folder that is already playing."""
+    status = app.library.status()
+    if status.get("playing") != "album" or status.get("playing_album_id") != album_id:
+        return
+    slide = tv.read_controls()["slideshow"]
+    minutes = int(slide.get("minutes") or 0)
+    if minutes <= 0:
+        minutes = _minutes()
+    tv.slideshow(
+        FAVORITES,
+        minutes,
+        shuffle=bool(slide.get("shuffle")),
+        content_ids=app.library.album_content_ids(album_id),
+    )
 
 
 def _stop(app: App) -> dict:
