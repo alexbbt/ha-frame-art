@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2
+
+### Fixes
+
+- keep the rotating folder in sync when photos are added or removed (`ff3e45b`)
+
+
 ## 0.5.1
 
 ### Fixes
