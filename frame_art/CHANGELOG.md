@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3
+
+### Fixes
+
+- read the slideshow status the TV actually sent (`f91b6f1`)
+
+
 ## 0.5.2
 
 ### Fixes
