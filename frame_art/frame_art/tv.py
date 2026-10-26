@@ -135,8 +135,12 @@ class FrameTV:
                 if named and request_name and named != request_name:
                     continue
                 raise _refused(payload, request_name)
-            if sub_event is None or payload.get("event") in {None, "*", sub_event}:
-                return payload
+            event_name = payload.get("event")
+            if sub_event:
+                if event_name in {sub_event, "*"}:
+                    return payload
+                continue
+            return payload
 
     def _connection_ready(self, request_id: str) -> dict:
         """Keep reading until the TV sends the preview socket, or an inline image."""
@@ -243,7 +247,7 @@ class FrameTV:
         )
 
     def read_controls(self) -> dict:
-        slideshow = slideshow_view(self.request("get_slideshow_status"))
+        slideshow = slideshow_view(self.request("get_slideshow_status", wait_for="get_slideshow_status"))
         try:
             art = art_items(self.request("get_artmode_settings"))
         except TVError:
