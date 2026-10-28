@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4
+
+### Fixes
+
+- show TV rotation state, shuffle to a new photo, and keep the folder in sync (`65840a9`)
+
+
 ## 0.5.3
 
 ### Fixes
