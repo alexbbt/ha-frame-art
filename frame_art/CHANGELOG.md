@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.5
+
+### Fixes
+
+- do not pin a photo after starting the TV slideshow (`c8ea678`)
+
+
 ## 0.5.4
 
 ### Fixes
