@@ -237,13 +237,7 @@ def _apply_settings(app: App, payload: dict) -> dict:
                     category = str(payload.get("category_id") or slide["category_id"] or FAVORITES)
                 if minutes > 0:
                     app.library.set_slideshow_prefs(minutes, bool(shuffle))
-                tv.apply_slideshow(
-                    category,
-                    minutes,
-                    bool(shuffle),
-                    content_ids,
-                    show_now=minutes > 0 and bool(content_ids),
-                )
+                tv.apply_slideshow(category, minutes, bool(shuffle), content_ids)
             item = str(payload.get("item") or "")
             if item:
                 tv.apply_art(item, str(payload.get("value", "")))
@@ -484,7 +478,7 @@ def _remove(app: App, payload: dict) -> dict:
     return {"ok": True, "removed": len(photos)}
 
 
-def _refresh_playing(app: App, tv, album_id: str, *, show_now: bool = False) -> None:
+def _refresh_playing(app: App, tv, album_id: str, *, show_now: bool = False) -> None:  # noqa: ARG001
     """Keep the TV rotation equal to the folder that is already playing."""
     status = app.library.status()
     if status.get("playing") != "album" or status.get("playing_album_id") != album_id:
@@ -494,13 +488,7 @@ def _refresh_playing(app: App, tv, album_id: str, *, show_now: bool = False) -> 
     minutes = int(slide.get("minutes") or 0) or prefs["minutes"]
     shuffle = prefs["shuffle"]
     content_ids = app.library.album_content_ids(album_id)
-    tv.apply_slideshow(
-        FAVORITES,
-        minutes,
-        shuffle,
-        content_ids,
-        show_now=show_now and minutes > 0 and bool(content_ids),
-    )
+    tv.apply_slideshow(FAVORITES, minutes, shuffle, content_ids)
     app.tv_slide = tv.read_controls()["slideshow"]
 
 
@@ -536,7 +524,7 @@ def _sync_playing(app: App) -> None:
             if not _slide_out_of_sync(slide, content_ids):
                 return
             print("Frame Art restoring the rotating folder", flush=True)
-            _refresh_playing(app, tv, album_id, show_now=True)
+            _refresh_playing(app, tv, album_id)
 
 
 def _watch(app: App) -> None:

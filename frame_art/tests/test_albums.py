@@ -100,7 +100,6 @@ class ProtocolTests(unittest.TestCase):
                 _d2d(event="favorite_changed"),
                 _d2d(event="favorite_changed"),
                 _d2d(event="set"),
-                _d2d(event="selected"),
             ]
         )
         tv = FrameTV(script, d2d_send=lambda *_args: None)
@@ -114,16 +113,15 @@ class ProtocolTests(unittest.TestCase):
                 "change_favorite",
                 "change_favorite",
                 "set_slideshow_status",
-                "select_image",
             ],
         )
-        slide = json.loads(json.loads(script.sent[-2])["params"]["data"])
+        slide = json.loads(json.loads(script.sent[-1])["params"]["data"])
         self.assertEqual(slide["category_id"], "MY-C0004")
         self.assertIn("MY_F0009", slide["content_list"])
         message = json.loads(art_message({"request": "get_content_list"}))
         self.assertEqual(message["method"], "ms.channel.emit")
 
-    def test_shuffle_starts_on_a_photo_from_the_folder(self) -> None:
+    def test_shuffle_starts_without_selecting_one_photo(self) -> None:
         script = Scripted(
             [
                 _d2d(content_list=json.dumps([])),
@@ -131,15 +129,13 @@ class ProtocolTests(unittest.TestCase):
                 _d2d(event="favorite_changed"),
                 _d2d(event="favorite_changed"),
                 _d2d(event="set"),
-                _d2d(event="selected"),
             ]
         )
         tv = FrameTV(script, d2d_send=lambda *_args: None)
         self.assertTrue(tv.play_folder(["MY_F0001", "MY_F0002", "MY_F0003"], 60, shuffle=True))
-        shown = json.loads(json.loads(script.sent[-1])["params"]["data"])
-        self.assertEqual(shown["request"], "select_image")
-        self.assertIn(shown["content_id"], {"MY_F0001", "MY_F0002", "MY_F0003"})
-        slide = json.loads(json.loads(script.sent[-2])["params"]["data"])
+        sent = [json.loads(json.loads(item)["params"]["data"])["request"] for item in script.sent]
+        self.assertNotIn("select_image", sent)
+        slide = json.loads(json.loads(script.sent[-1])["params"]["data"])
         self.assertEqual(slide["type"], "shuffleslideshow")
 
     def test_folder_slideshow_uses_my_photos_when_favorites_is_refused(self) -> None:
@@ -154,7 +150,6 @@ class ProtocolTests(unittest.TestCase):
                     request_data=json.dumps({"request": "set_slideshow_status"}),
                 ),
                 _d2d(event="slideshow_changed"),
-                _d2d(event="selected"),
             ]
         )
         tv = FrameTV(script, d2d_send=lambda *_args: None)

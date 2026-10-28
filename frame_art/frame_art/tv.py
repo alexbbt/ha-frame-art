@@ -265,10 +265,10 @@ class FrameTV:
     ) -> None:
         self.slideshow(category_id, minutes, shuffle=shuffle, content_ids=content_ids)
         chosen = [content_id for content_id in (content_ids or []) if content_id]
-        if show_now and minutes > 0 and chosen:
-            pick = random.choice(chosen) if shuffle else chosen[0]
+        # A select_image after a timed slideshow clears rotation on this TV.
+        if show_now and minutes <= 0 and chosen:
             try:
-                self.show(pick)
+                self.show(chosen[0])
             except TVError:
                 pass
 
@@ -391,13 +391,15 @@ class FrameTV:
             except TVError as err:
                 print(f"Frame Art left {content_id} favorite: {err}", flush=True)
         self.slideshow(FAVORITES, minutes, shuffle=shuffle, content_ids=content_ids)
-        if not content_ids or minutes <= 0:
+        if not content_ids:
             return False
-        pick = random.choice(content_ids) if shuffle else content_ids[0]
-        try:
-            self.show(pick)
-        except TVError:
-            return False
+        # Selecting an image after set_slideshow_status turns rotation off on this
+        # Frame. Only pin one photo when the slideshow itself is off.
+        if minutes <= 0:
+            try:
+                self.show(content_ids[0])
+            except TVError:
+                return False
         return True
 
     def play_all(self, minutes: int, *, shuffle: bool = True) -> None:
