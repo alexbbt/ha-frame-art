@@ -22,10 +22,22 @@ JPEG = b"\xff\xd8\xff\x00tiny"
 class SettingViewTests(unittest.TestCase):
     def test_reads_slideshow_and_art_items(self) -> None:
         slide = slideshow_view(
-            {"data": '{"value":"60","type":"shuffleslideshow","category_id":"MY-C0004"}'}
+            {
+                "data": json.dumps(
+                    {
+                        "value": "60",
+                        "type": "shuffleslideshow",
+                        "category_id": "MY-C0004",
+                        "content_list": '[{"content_id":"MY_F0001"},{"content_id":"MY_F0002"}]',
+                        "current_content_id": "MY_F0002",
+                    }
+                )
+            }
         )
         self.assertEqual(slide["minutes"], 60)
         self.assertTrue(slide["shuffle"])
+        self.assertEqual(slide["content_ids"], ["MY_F0001", "MY_F0002"])
+        self.assertEqual(slide["current_content_id"], "MY_F0002")
         self.assertEqual(slide["category_id"], "MY-C0004")
         art = art_items(
             {"data": [{"item": "brightness", "value": "4"}, {"item": "motion_timer", "value": "off"}]}
@@ -110,6 +122,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("MY_F0009", slide["content_list"])
         message = json.loads(art_message({"request": "get_content_list"}))
         self.assertEqual(message["method"], "ms.channel.emit")
+
+    def test_shuffle_starts_on_a_photo_from_the_folder(self) -> None:
+        script = Scripted(
+            [
+                _d2d(content_list=json.dumps([])),
+                _d2d(event="favorite_changed"),
+                _d2d(event="favorite_changed"),
+                _d2d(event="favorite_changed"),
+                _d2d(event="set"),
+                _d2d(event="selected"),
+            ]
+        )
+        tv = FrameTV(script, d2d_send=lambda *_args: None)
+        self.assertTrue(tv.play_folder(["MY_F0001", "MY_F0002", "MY_F0003"], 60, shuffle=True))
+        shown = json.loads(json.loads(script.sent[-1])["params"]["data"])
+        self.assertEqual(shown["request"], "select_image")
+        self.assertIn(shown["content_id"], {"MY_F0001", "MY_F0002", "MY_F0003"})
+        slide = json.loads(json.loads(script.sent[-2])["params"]["data"])
+        self.assertEqual(slide["type"], "shuffleslideshow")
 
     def test_folder_slideshow_uses_my_photos_when_favorites_is_refused(self) -> None:
         script = Scripted(
@@ -379,9 +410,18 @@ class FakeTV:
 
     def read_controls(self) -> dict:
         return {
-            "slideshow": {"minutes": 15, "shuffle": False, "category_id": "MY-C0002"},
+            "slideshow": {
+                "minutes": 15,
+                "shuffle": False,
+                "category_id": "MY-C0002",
+                "content_ids": [],
+                "current_content_id": "",
+            },
             "art": {"brightness": "4", "motion_timer": "off"},
         }
+
+    def show(self, content_id: str) -> None:
+        self.shown = content_id
 
     def apply_slideshow(
         self,
@@ -389,8 +429,11 @@ class FakeTV:
         minutes: int,
         shuffle: bool,
         content_ids: list[str] | None = None,
+        *,
+        show_now: bool = False,
     ) -> None:
         self.slide = (category_id, minutes, shuffle, content_ids)
+        self.show_now = show_now
 
     def apply_art(self, item: str, value: str) -> None:
         self.art = (item, value)

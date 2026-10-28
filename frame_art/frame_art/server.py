@@ -6,6 +6,7 @@ import json
 import os
 import re
 import threading
+import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,6 +18,7 @@ from .tv import TVError, open_tv
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_BODY = 80 * 1024 * 1024
+WATCH_SECONDS = 60
 
 
 class App:
@@ -26,6 +28,7 @@ class App:
         self.files = files if files is not None else library.path.parent / "files"
         self.lock = threading.Lock()
         self.thumbs: dict[str, bytes] = {}
+        self.tv_slide: dict | None = None
 
     def view(self) -> dict:
         self.library.ensure_album()
@@ -35,6 +38,10 @@ class App:
             photo["file"] = path is not None and path.is_file()
         payload["configured"] = bool(_host())
         payload["frame"] = self.library.frame_mode()
+        prefs = self.library.slideshow_prefs()
+        payload["slideshow_minutes"] = prefs["minutes"]
+        payload["slideshow_shuffle"] = prefs["shuffle"]
+        payload["tv"] = self.tv_slide
         return payload
 
 
@@ -206,7 +213,9 @@ def handler_for(app: App):
 def _read_settings(app: App) -> dict:
     with app.lock:
         with app.connect() as tv:
-            return tv.read_controls()
+            controls = tv.read_controls()
+    app.tv_slide = controls.get("slideshow")
+    return controls
 
 
 def _apply_settings(app: App, payload: dict) -> dict:
@@ -219,16 +228,28 @@ def _apply_settings(app: App, payload: dict) -> dict:
                 shuffle = payload.get("shuffle", slide["shuffle"])
                 if isinstance(shuffle, str):
                     shuffle = shuffle.lower() == "true"
-                category = str(payload.get("category_id") or slide["category_id"])
                 content_ids = None
                 playing = app.library.status()
                 if playing.get("playing") == "album" and playing.get("playing_album_id"):
                     content_ids = app.library.album_content_ids(str(playing["playing_album_id"]))
-                tv.apply_slideshow(category, minutes, bool(shuffle), content_ids)
+                    category = FAVORITES
+                else:
+                    category = str(payload.get("category_id") or slide["category_id"] or FAVORITES)
+                if minutes > 0:
+                    app.library.set_slideshow_prefs(minutes, bool(shuffle))
+                tv.apply_slideshow(
+                    category,
+                    minutes,
+                    bool(shuffle),
+                    content_ids,
+                    show_now=minutes > 0 and bool(content_ids),
+                )
             item = str(payload.get("item") or "")
             if item:
                 tv.apply_art(item, str(payload.get("value", "")))
-            return tv.read_controls()
+            controls = tv.read_controls()
+    app.tv_slide = controls.get("slideshow")
+    return controls
 
 
 def _image(data: bytes) -> bool:
@@ -463,21 +484,68 @@ def _remove(app: App, payload: dict) -> dict:
     return {"ok": True, "removed": len(photos)}
 
 
-def _refresh_playing(app: App, tv, album_id: str) -> None:
+def _refresh_playing(app: App, tv, album_id: str, *, show_now: bool = False) -> None:
     """Keep the TV rotation equal to the folder that is already playing."""
     status = app.library.status()
     if status.get("playing") != "album" or status.get("playing_album_id") != album_id:
         return
+    prefs = app.library.slideshow_prefs()
     slide = tv.read_controls()["slideshow"]
-    minutes = int(slide.get("minutes") or 0)
-    if minutes <= 0:
-        minutes = _minutes()
-    tv.slideshow(
+    minutes = int(slide.get("minutes") or 0) or prefs["minutes"]
+    shuffle = prefs["shuffle"]
+    content_ids = app.library.album_content_ids(album_id)
+    tv.apply_slideshow(
         FAVORITES,
         minutes,
-        shuffle=bool(slide.get("shuffle")),
-        content_ids=app.library.album_content_ids(album_id),
+        shuffle,
+        content_ids,
+        show_now=show_now and minutes > 0 and bool(content_ids),
     )
+    app.tv_slide = tv.read_controls()["slideshow"]
+
+
+def _slide_out_of_sync(slide: dict, content_ids: list[str]) -> bool:
+    """True when the TV is not rotating the playing folder."""
+    if int(slide.get("minutes") or 0) <= 0:
+        return True
+    have = set(slide.get("content_ids") or [])
+    wanted = set(content_ids)
+    if not wanted:
+        return False
+    if not have:
+        return True
+    missing = wanted - have
+    return len(missing) > max(1, len(wanted) // 10)
+
+
+def _sync_playing(app: App) -> None:
+    """If a folder should be rotating, put that list back on the TV when it drifts."""
+    if not _host():
+        return
+    status = app.library.status()
+    if status.get("playing") != "album" or not status.get("playing_album_id"):
+        return
+    album_id = str(status["playing_album_id"])
+    content_ids = app.library.album_content_ids(album_id)
+    if not content_ids:
+        return
+    with app.lock:
+        with app.connect() as tv:
+            slide = tv.read_controls()["slideshow"]
+            app.tv_slide = slide
+            if not _slide_out_of_sync(slide, content_ids):
+                return
+            print("Frame Art restoring the rotating folder", flush=True)
+            _refresh_playing(app, tv, album_id, show_now=True)
+
+
+def _watch(app: App) -> None:
+    while True:
+        time.sleep(WATCH_SECONDS)
+        try:
+            _sync_playing(app)
+        except Exception as err:
+            print(f"Frame Art could not check the TV: {err}", flush=True)
 
 
 def _stop(app: App) -> dict:
@@ -485,21 +553,26 @@ def _stop(app: App) -> dict:
         with app.connect() as tv:
             current = tv.read_controls()["slideshow"]
             tv.apply_slideshow(current["category_id"], 0, bool(current["shuffle"]))
+            app.tv_slide = tv.read_controls()["slideshow"]
         app.library.mark_playing(None, None)
     return {"playing": None}
 
 
 def _play(app: App, album_id: str, minutes: int | None = None, shuffle: bool = True) -> dict:
     chosen = _minutes() if minutes is None else max(0, min(1440, minutes))
+    if chosen > 0:
+        app.library.set_slideshow_prefs(chosen, bool(shuffle))
     with app.lock:
         with app.connect() as tv:
             if not album_id:
                 tv.play_all(chosen, shuffle=shuffle)
                 app.library.mark_playing("all", None)
+                app.tv_slide = tv.read_controls()["slideshow"]
                 return {"playing": "all", "showing": False}
             content_ids = app.library.album_content_ids(album_id)
             showing = tv.play_folder(content_ids, chosen, shuffle=shuffle)
             app.library.mark_playing("album", album_id)
+            app.tv_slide = tv.read_controls()["slideshow"]
     if showing:
         return {"playing": "album", "showing": True}
     return {"playing": "album", "showing": False, "note": "Saved the set. The TV will show it when Art Mode is on."}
@@ -575,6 +648,8 @@ def _forget(app: App, photo_id: str) -> None:
 def main() -> None:
     data_dir = Path(os.environ.get("FRAME_ART_DATA", "/data"))
     app = App(Library(data_dir / "library.json"), lambda: _connect(data_dir), data_dir / "files")
+    if _host():
+        threading.Thread(target=_watch, args=(app,), name="frame-art-watch", daemon=True).start()
     port = int(os.environ.get("PORT", "8391"))
     httpd = ThreadingHTTPServer(("0.0.0.0", port), handler_for(app))
     httpd.serve_forever()

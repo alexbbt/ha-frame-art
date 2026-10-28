@@ -260,8 +260,17 @@ class FrameTV:
         minutes: int,
         shuffle: bool,
         content_ids: list[str] | None = None,
+        *,
+        show_now: bool = False,
     ) -> None:
         self.slideshow(category_id, minutes, shuffle=shuffle, content_ids=content_ids)
+        chosen = [content_id for content_id in (content_ids or []) if content_id]
+        if show_now and minutes > 0 and chosen:
+            pick = random.choice(chosen) if shuffle else chosen[0]
+            try:
+                self.show(pick)
+            except TVError:
+                pass
 
     def apply_art(self, item: str, value: str) -> None:
         if item == "brightness":
@@ -382,10 +391,11 @@ class FrameTV:
             except TVError as err:
                 print(f"Frame Art left {content_id} favorite: {err}", flush=True)
         self.slideshow(FAVORITES, minutes, shuffle=shuffle, content_ids=content_ids)
-        if not content_ids:
+        if not content_ids or minutes <= 0:
             return False
+        pick = random.choice(content_ids) if shuffle else content_ids[0]
         try:
-            self.show(content_ids[0])
+            self.show(pick)
         except TVError:
             return False
         return True
@@ -535,10 +545,23 @@ def slideshow_view(payload: dict) -> dict:
         except ValueError:
             minutes = 0
     kind = str(payload.get("type") or "")
+    raw_list = payload.get("content_list") or "[]"
+    try:
+        items = json.loads(raw_list) if isinstance(raw_list, str) else (raw_list or [])
+    except json.JSONDecodeError:
+        items = []
+    content_ids: list[str] = []
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, dict) and item.get("content_id"):
+            content_ids.append(str(item["content_id"]))
+        elif isinstance(item, str) and item:
+            content_ids.append(item)
     return {
         "minutes": minutes,
         "shuffle": "shuffle" in kind,
         "category_id": str(payload.get("category_id") or MY_PHOTOS),
+        "content_ids": content_ids,
+        "current_content_id": str(payload.get("current_content_id") or ""),
     }
 
 

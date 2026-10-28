@@ -136,6 +136,25 @@ class Library:
             self._data["playing_album_id"] = album_id
             self._save()
 
+    def slideshow_prefs(self) -> dict:
+        with self._lock:
+            minutes = self._data.get("slideshow_minutes")
+            try:
+                minutes = int(minutes)
+            except (TypeError, ValueError):
+                minutes = 60
+            shuffle = self._data.get("slideshow_shuffle", True)
+            return {
+                "minutes": min(1440, max(1, minutes or 60)),
+                "shuffle": bool(shuffle),
+            }
+
+    def set_slideshow_prefs(self, minutes: int, shuffle: bool) -> None:
+        with self._lock:
+            self._data["slideshow_minutes"] = min(1440, max(1, int(minutes) or 60))
+            self._data["slideshow_shuffle"] = bool(shuffle)
+            self._save()
+
     def sync_tv(self, album_id: str, content_ids: list[tuple[str, str]]) -> None:
         """Add pictures found on the TV and drop local ones the TV no longer has."""
         with self._lock:
@@ -186,6 +205,8 @@ class Library:
         data.setdefault("photos", [])
         data.setdefault("playing", None)
         data.setdefault("playing_album_id", None)
+        data.setdefault("slideshow_minutes", 60)
+        data.setdefault("slideshow_shuffle", True)
         data["frame"] = _frame_mode(data.get("frame"))
         return data
 

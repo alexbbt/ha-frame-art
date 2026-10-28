@@ -16,6 +16,7 @@ const sheetName = document.getElementById("sheet-name");
 const sheetMove = document.getElementById("sheet-move");
 
 const STAY = [
+  [0, "Off"],
   [5, "5 minutes"],
   [15, "15 minutes"],
   [30, "30 minutes"],
@@ -26,7 +27,17 @@ const STAY = [
   [1440, "1 day"],
 ];
 
-let state = { albums: [], photos: [], playing: null, playing_album_id: null, configured: true };
+let state = {
+  albums: [],
+  photos: [],
+  playing: null,
+  playing_album_id: null,
+  configured: true,
+  tv: null,
+  slideshow_minutes: 60,
+  slideshow_shuffle: true,
+};
+const tvStateEl = document.getElementById("tv-state");
 let controls = null;
 let selected = "";
 let sending = false;
@@ -135,17 +146,46 @@ async function api(path, payload) {
   return data;
 }
 
+function stayLabel(minutes) {
+  const found = STAY.find(([value]) => value === minutes);
+  if (found) return found[1];
+  if (!minutes) return "Off";
+  return minutes + " minutes";
+}
+
 function fillStay(current) {
-  const values = STAY.map(([value]) => value);
+  const minutes = Number(current);
+  const value = Number.isFinite(minutes) ? minutes : 60;
+  const values = STAY.map(([item]) => item);
   minutesEl.replaceChildren();
-  const options = values.includes(current) ? STAY : [[current, current + " minutes"], ...STAY];
-  options.forEach(([value, label]) => {
+  const options = values.includes(value) ? STAY : [[value, stayLabel(value)], ...STAY];
+  options.forEach(([item, label]) => {
     const option = document.createElement("option");
-    option.value = String(value);
+    option.value = String(item);
     option.textContent = label;
     minutesEl.appendChild(option);
   });
-  if (current) minutesEl.value = String(current);
+  minutesEl.value = String(value);
+}
+
+function fillTvState(slide) {
+  if (!tvStateEl) return;
+  if (!slide) {
+    tvStateEl.textContent = "TV settings unavailable";
+    return;
+  }
+  const count = Array.isArray(slide.content_ids) ? slide.content_ids.length : 0;
+  if (!slide.minutes) {
+    tvStateEl.textContent = count
+      ? "TV: rotation off · one photo on screen"
+      : "TV: rotation off";
+    return;
+  }
+  const order = slide.shuffle ? "shuffle" : "in order";
+  const every = stayLabel(slide.minutes).toLowerCase();
+  tvStateEl.textContent = count
+    ? "TV: " + order + " · every " + every + " · " + count + " photos"
+    : "TV: " + order + " · every " + every;
 }
 
 function needsThumb(photo) {
@@ -319,24 +359,35 @@ async function refresh() {
   const response = await fetch("api/status");
   state = await response.json();
   if (!state.configured) note("Set the TV address in the app options.", true);
+  if (state.tv) fillTvState(state.tv);
   await showCurrent();
 }
 
 async function loadControls() {
   const response = await fetch("api/settings");
-  if (!response.ok) return;
+  if (!response.ok) {
+    fillTvState(state.tv);
+    return;
+  }
   controls = await response.json();
   const slide = controls.slideshow || {};
   const art = controls.art || {};
+  state.tv = slide;
   applying = true;
-  fillStay(slide.minutes || 60);
-  orderEl.value = slide.shuffle ? "shuffle" : "order";
+  if (slide.minutes > 0) {
+    fillStay(slide.minutes);
+    orderEl.value = slide.shuffle ? "shuffle" : "order";
+  } else {
+    fillStay(state.slideshow_minutes || 60);
+    orderEl.value = state.slideshow_shuffle ? "shuffle" : "order";
+  }
   setArt("brightness", art.brightness, "row-brightness");
   setArt("color", art.color_temperature, "row-color");
   setSelect("motion", art.motion_sensitivity, "row-motion");
-  setSelect("sensor", art.brightness_sensor, "row-sensor");
+  setSelect("sensor", art.brightness_sensor || art.brightness_sensor_setting, "row-sensor");
   setSelect("sleep", art.motion_timer, "row-sleep");
   applying = false;
+  fillTvState(slide);
 }
 
 function setArt(id, value, rowId) {
@@ -366,9 +417,15 @@ async function saveSlideshow() {
   const data = await api("api/settings", {
     minutes: Number(minutesEl.value),
     shuffle: orderEl.value === "shuffle",
-    category_id: (controls.slideshow || {}).category_id,
   });
   controls = data;
+  state.tv = data.slideshow || null;
+  if (Number(minutesEl.value) > 0) {
+    state.slideshow_minutes = Number(minutesEl.value);
+    state.slideshow_shuffle = orderEl.value === "shuffle";
+  }
+  fillTvState(state.tv);
+  await refresh();
 }
 
 async function saveArt(item, value) {
@@ -653,6 +710,11 @@ themeQuery.addEventListener("change", () => {
 applyTheme(savedTheme());
 
 fillStay(60);
+fillTvState(null);
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  loadControls().catch(() => {});
+}, 45000);
 refresh()
   .then(() => loadControls())
   .catch(() => note("The page could not load.", true));
